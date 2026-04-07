@@ -1,0 +1,80 @@
+KungFu First-Time Setup Checklist (Windows PC + iPhone)
+
+1) Install Node.js (once)
+- Open: https://nodejs.org/en/download
+- Download Windows Installer (.msi), LTS version (Node 22.5.0+ is required)
+- Install with default options (PATH enabled by default)
+- Verify in PowerShell:
+  node -v
+  npm -v
+
+2) Open project on owner's PC
+- Put/copy project folder to a local path, for example:
+  D:\kungfu
+- In PowerShell:
+  cd D:\kungfu
+
+3) Install dependencies
+- Run:
+  npm install
+
+4) Build and start production server
+- Run:
+  npm run build
+  $env:NODE_ENV = "production"
+  npm start
+- Expected log:
+  KungFu listening on http://0.0.0.0:3000 (production)
+
+5) Test on PC browser
+- Open:
+  http://127.0.0.1:3000
+- Optional health check:
+  http://127.0.0.1:3000/api/health
+
+6) Find PC LAN IP for phone access
+- Run:
+  ipconfig
+- Find Wi-Fi "IPv4 Address" (example: 192.168.1.170)
+
+7) Test on iPhone (same Wi-Fi)
+- Open in phone browser:
+  http://<PC_IP>:3000
+  Example: http://192.168.1.170:3000
+- If blocked, allow Node.js in Windows Firewall (Private network)
+
+8) Quick functional smoke test
+- Add a new member:
+  - Name (required)
+  - Age, phone, email (optional)
+- Add credits to a class
+- Mark attendance for that class
+- Open Summary page and confirm values update
+
+9) Backup (recommended immediately)
+- Run:
+  npm run backup-db -- "D:\Backups\KungFu"
+
+10) Set daily backup schedule (recommended)
+- Edit:
+  scripts/register-daily-backup-task.ps1
+  - Set $BackupDir
+  - Set $DailyAt
+- Run PowerShell as Administrator:
+  cd D:\kungfu
+  .\scripts\register-daily-backup-task.ps1
+- Confirm task exists in Task Scheduler:
+  "KungFu daily DB backup"
+
+11) Future update routine
+- After copying new code to the owner PC:
+  npm install
+  npm run build
+  $env:NODE_ENV = "production"
+  npm start
+
+Notes
+- Production URL for owner and phone is on port 3000.
+- Dev URL (5173) is only for development workflow.
+- Database file is:
+  data\kungfu.db
