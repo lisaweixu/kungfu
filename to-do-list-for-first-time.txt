@@ -1,80 +1,137 @@
 KungFu First-Time Setup Checklist (Windows PC + iPhone)
 
+IMPORTANT: Do each step in order. In particular, NEVER set $env:NODE_ENV = "production"
+until step 6 (after the build). If it is set earlier, "npm install" skips Vite/React and
+"npm run build" will fail with "vite is not recognized".
+If you think you already set it, open a fresh PowerShell window to start clean.
+
 1) Install Node.js (once)
 - Open: https://nodejs.org/en/download
 - Download Windows Installer (.msi), LTS version (Node 22.5.0+ is required)
 - Install with default options (PATH enabled by default)
-- Verify in PowerShell:
+- Close any open PowerShell windows, then open a NEW one (PATH only refreshes in new shells)
+- Verify:
   node -v
   npm -v
 
-2) Open project on owner's PC
-- Put/copy project folder to a local path, for example:
-  D:\kungfu
-- In PowerShell:
-  cd D:\kungfu
+1a) If "npm -v" fails with a red error like
+    "无法加载文件 npm.ps1 因为在此系统上禁止运行脚本"
+    (English: "npm.ps1 cannot be loaded because running scripts is disabled on this system"):
+- Open PowerShell as Administrator and run:
+  Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+- Press Y to confirm
+- Close that window, open a new PowerShell, then re-run:
+  npm -v
 
-3) Install dependencies
-- Run:
+2) Install Git (once)
+- Open: https://git-scm.com/download/win
+- Run the .exe installer; accept defaults except:
+  - "Default editor": pick Notepad (or VS Code) - not Vim
+  - "Adjusting your PATH": pick "Git from the command line and also from 3rd-party software" (recommended)
+- Close and reopen PowerShell, then verify:
+  git --version
+- Set identity (used in commits):
+  git config --global user.name  "Club Owner"
+  git config --global user.email "owner@example.com"
+
+3) Clone the project
+- In a fresh PowerShell window (no $env:NODE_ENV set!):
+  Set-Location D:\
+  git clone https://github.com/lisaweixu/kungfu.git
+  Set-Location D:\kungfu
+
+4) Install dependencies
+- Confirm NODE_ENV is NOT set:
+  echo "NODE_ENV='$env:NODE_ENV'"     # must print NODE_ENV=''
+- Then:
   npm install
+- Expect ~150-250 packages installed. If far fewer (e.g. 76), NODE_ENV was set and
+  devDependencies were skipped. Fix:
+  $env:NODE_ENV = $null
+  Remove-Item -Recurse -Force .\node_modules, .\package-lock.json -ErrorAction SilentlyContinue
+  npm install
+- Quick sanity check:
+  Test-Path .\node_modules\.bin\vite.cmd     # must be True
 
-4) Build and start production server
-- Run:
-  npm run build
+5) Seed the database (choose ONE)
+Option A - Restore from an existing backup (use the owner's real data):
+  Stop-Process -Name node -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Path .\data -Force | Out-Null
+  Copy-Item "C:\path\to\kungfu-backup-<timestamp>.db" .\data\kungfu.db -Force
+  npm run verify-backup -- .\data\kungfu.db     # should print "OK: backup looks healthy."
+
+Option B - Start fresh (blank club):
+  Do nothing here. On first "npm start", the server will auto-create data\kungfu.db
+  and seed the default class types. Delete unwanted classes later via the owner UI;
+  they will NOT come back (seeding only runs when class_types is empty).
+
+6) Build and start production server
+- Only NOW set NODE_ENV:
+  npm run build                      # creates dist\
   $env:NODE_ENV = "production"
   npm start
-- Expected log:
-  KungFu listening on http://0.0.0.0:3000 (production)
+- Expected log line (and a logs\server-YYYY-MM-DD.log file appears):
+  [INFO] KungFu listening on http://0.0.0.0:3000 (production)
+  [INFO] Logging to D:\kungfu\logs\server-YYYY-MM-DD.log
 
-5) Test on PC browser
-- Open:
-  http://127.0.0.1:3000
-- Optional health check:
-  http://127.0.0.1:3000/api/health
+7) Test on PC browser
+- Open: http://127.0.0.1:3000
+- Optional health check: http://127.0.0.1:3000/api/health
 
-6) Find PC LAN IP for phone access
-- Run:
-  ipconfig
-- Find Wi-Fi "IPv4 Address" (example: 192.168.1.170)
+8) Find PC LAN IP for phone access
+- Run: ipconfig
+- Use the Wi-Fi "IPv4 Address" (example: 192.168.1.170)
 
-7) Test on iPhone (same Wi-Fi)
-- Open in phone browser:
-  http://<PC_IP>:3000
+9) Test on iPhone (same Wi-Fi)
+- Open: http://<PC_IP>:3000
   Example: http://192.168.1.170:3000
-- If blocked, allow Node.js in Windows Firewall (Private network)
+- If blocked, allow Node.js through Windows Firewall (Private network).
 
-8) Quick functional smoke test
-- Add a new member:
-  - Name (required)
-  - Age, phone, email (optional)
+10) Quick functional smoke test
+- Add a new member (Name required; age, phone, email optional)
 - Add credits to a class
 - Mark attendance for that class
-- Open Summary page and confirm values update
+- Open Summary page; confirm values update
 
-9) Backup (recommended immediately)
+11) One-off manual backup (do this now, at least once)
 - Run:
   npm run backup-db -- "D:\Backups\KungFu"
+- Verify it:
+  npm run verify-backup -- "D:\Backups\KungFu"     # OK: backup looks healthy.
 
-10) Set daily backup schedule (recommended)
-- Edit:
-  scripts/register-daily-backup-task.ps1
-  - Set $BackupDir
-  - Set $DailyAt
-- Run PowerShell as Administrator:
-  cd D:\kungfu
+12) Set daily backup schedule (recommended)
+- Edit scripts\register-daily-backup-task.ps1:
+  - Set $BackupDir    (use another drive, OneDrive, or NAS for real redundancy)
+  - Set $DailyAt      (HH:mm, 24h; pick a time the PC is on)
+- Open PowerShell as Administrator:
+  Set-Location D:\kungfu
   .\scripts\register-daily-backup-task.ps1
-- Confirm task exists in Task Scheduler:
-  "KungFu daily DB backup"
+- Confirm in Task Scheduler: "KungFu daily DB backup"
+- Test it without waiting for tomorrow:
+  Start-ScheduledTask -TaskName 'KungFu daily DB backup'
+  Start-Sleep 5
+  Get-Content .\logs\backup-daily.log -Tail 25
+- The daily run now backs up AND verifies; logs end with "OK: backup looks healthy."
 
-11) Future update routine
-- After copying new code to the owner PC:
+13) Where are the log files?
+- Server logs:   logs\server-YYYY-MM-DD.log   (one file per day, auto-rotated)
+- Backup logs:   logs\backup-daily.log        (one running log)
+- Tail live:     Get-Content .\logs\server-2026-04-22.log -Wait -Tail 20
+
+14) Future update routine (when code on GitHub changes)
+- On the owner PC, in a fresh PowerShell window:
+  Set-Location D:\kungfu
+  Stop-Process -Name node -Force -ErrorAction SilentlyContinue
+  git pull
+  $env:NODE_ENV = $null              # critical: clear before install
   npm install
   npm run build
   $env:NODE_ENV = "production"
   npm start
+- Data (data\kungfu.db) and logs are NOT overwritten by git pull.
 
 Notes
-- Production URL for owner and phone is on port 3000.
-- Dev URL (5173) is only for development workflow.
-- Database file is:
-  data\kungfu.db
+- Production URL for owner and phone is port 3000.
+- Dev URL (5173) is only for the development workflow.
+- Live database file:  data\kungfu.db
+- .gitignore excludes:  data/, logs/, dist/, node_modules/   (nothing private leaves the PC via git).

@@ -12,6 +12,7 @@ import {
   deleteClassTypeById,
   getClubSummary,
 } from './db.js';
+import { log, requestLogger, errorLogger } from './logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
@@ -21,6 +22,7 @@ const PORT = Number(process.env.PORT) || 3000;
 const app = express();
 app.use(cors(isProd ? { origin: false } : { origin: true }));
 app.use(express.json({ limit: '256kb' }));
+app.use(requestLogger);
 
 function listMembers() {
   const members = db
@@ -242,10 +244,13 @@ if (isProd) {
   });
 }
 
+app.use(errorLogger);
+
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(
+  log.info(
     isProd
       ? `KungFu listening on http://0.0.0.0:${PORT} (production)`
       : `KungFu API listening on http://127.0.0.1:${PORT}`
   );
+  log.info(`Logging to ${log.file}`);
 });

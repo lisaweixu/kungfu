@@ -62,24 +62,46 @@ try {
   Write-LogLine "----"
   Write-LogLine "Starting backup (node: $node) -> KUNGFU_BACKUP_DIR=$BackupDir"
 
-  $outLog = Join-Path $env:TEMP ("kungfu-backup-out-{0}.txt" -f [Guid]::NewGuid().ToString('n'))
-  $errLog = Join-Path $env:TEMP ("kungfu-backup-err-{0}.txt" -f [Guid]::NewGuid().ToString('n'))
+  function Invoke-NodeScript([string] $Label, [string] $ScriptPath, [string[]] $ExtraArgs) {
+    $outLog = Join-Path $env:TEMP ("kungfu-$Label-out-{0}.txt" -f [Guid]::NewGuid().ToString('n'))
+    $errLog = Join-Path $env:TEMP ("kungfu-$Label-err-{0}.txt" -f [Guid]::NewGuid().ToString('n'))
+    $argList = @("`"$ScriptPath`"") + ($ExtraArgs | ForEach-Object { "`"$_`"" })
+    try {
+      $proc = Start-Process -FilePath $node -ArgumentList $argList -WorkingDirectory $ProjectRoot `
+        -Wait -PassThru -NoNewWindow `
+        -RedirectStandardOutput $outLog -RedirectStandardError $errLog
+      foreach ($line in (Get-Content -LiteralPath $outLog -ErrorAction SilentlyContinue)) {
+        Write-LogLine $line
+      }
+      foreach ($line in (Get-Content -LiteralPath $errLog -ErrorAction SilentlyContinue)) {
+        Write-LogLine $line
+      }
+      return $proc.ExitCode
+    }
+    finally {
+      Remove-Item -LiteralPath $outLog, $errLog -ErrorAction SilentlyContinue
+    }
+  }
+
   try {
-    $proc = Start-Process -FilePath $node -ArgumentList "`"$mjs`"" -WorkingDirectory $ProjectRoot `
-      -Wait -PassThru -NoNewWindow `
-      -RedirectStandardOutput $outLog -RedirectStandardError $errLog
-    foreach ($line in (Get-Content -LiteralPath $outLog -ErrorAction SilentlyContinue)) {
-      Write-LogLine $line
+    $code = Invoke-NodeScript -Label 'backup' -ScriptPath $mjs -ExtraArgs @()
+    if ($code -ne 0) {
+      throw ("backup-db.mjs exited with code {0}" -f $code)
     }
-    foreach ($line in (Get-Content -LiteralPath $errLog -ErrorAction SilentlyContinue)) {
-      Write-LogLine $line
+
+    $verify = Join-Path $ProjectRoot 'scripts\verify-backup.mjs'
+    if (Test-Path -LiteralPath $verify) {
+      Write-LogLine "Verifying newest backup in $BackupDir"
+      $vcode = Invoke-NodeScript -Label 'verify' -ScriptPath $verify -ExtraArgs @($BackupDir)
+      if ($vcode -ne 0) {
+        throw ("verify-backup.mjs exited with code {0} - backup may be corrupt" -f $vcode)
+      }
     }
-    if ($proc.ExitCode -ne 0) {
-      throw ("backup-db.mjs exited with code {0}" -f $proc.ExitCode)
+    else {
+      Write-LogLine "WARN: verify-backup.mjs not found, skipping verification"
     }
   }
   finally {
-    Remove-Item -LiteralPath $outLog, $errLog -ErrorAction SilentlyContinue
     if ($null -eq $prevNodeOpts) {
       Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue
     }
