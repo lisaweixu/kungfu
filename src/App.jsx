@@ -370,6 +370,7 @@ export default function App() {
 function SummaryView({ onBack, onOpenMember, setErr }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [emailModalClass, setEmailModalClass] = useState(null);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -438,6 +439,15 @@ function SummaryView({ onBack, onOpenMember, setErr }) {
           Refresh
         </button>
       </div>
+      {emailModalClass ? (
+        <ClassEmailModal
+          classType={emailModalClass}
+          onClose={() => setEmailModalClass(null)}
+          onSent={() => setEmailModalClass(null)}
+          setErr={setErr}
+        />
+      ) : null}
+
       <div className="summary-table-wrap">
         <table className="summary-table">
           <thead>
@@ -451,6 +461,14 @@ function SummaryView({ onBack, onOpenMember, setErr }) {
                 <th key={c.id} className="summary-class-head">
                   <span className="summary-class-head-name">{c.name}</span>
                   <span className="summary-class-head-sub">left / visits</span>
+                  <button
+                    type="button"
+                    className="summary-class-email-btn"
+                    onClick={() => setEmailModalClass(c)}
+                    title={`Email members in ${c.name}`}
+                  >
+                    📧 Email
+                  </button>
                 </th>
               ))}
             </tr>
@@ -503,6 +521,157 @@ function SummaryView({ onBack, onOpenMember, setErr }) {
             )}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+function ClassEmailModal({ classType, onClose, onSent, setErr }) {
+  const [recipients, setRecipients] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [showRecipients, setShowRecipients] = useState(false);
+  const [subject, setSubject] = useState(
+    `${classType.name} 课程取消 / Class cancelled — ${localDateIso()}`
+  );
+  const [body, setBody] = useState(
+    [
+      `Hi everyone,`,
+      ``,
+      `${classType.name} class is cancelled today (${localDateIso()}).`,
+      `Reason: [bad weather / instructor sick / other].`,
+      `Your credit balance is unaffected.`,
+      ``,
+      `Sorry for the inconvenience — see you next time!`,
+      ``,
+      `各位好，今天${classType.name}的课程取消。`,
+      `原因：天气恶劣 / 老师生病 / 其他。`,
+      `您的课时不受影响，下次见！`,
+    ].join('\n')
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api(`/api/class-types/${classType.id}/email-recipients`);
+        if (!cancelled) setRecipients(r);
+      } catch (e) {
+        if (!cancelled) setErr(e.message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [classType.id, setErr]);
+
+  const send = async () => {
+    setErr(null);
+    if (!subject.trim() || !body.trim()) {
+      setErr('Subject and body are required.');
+      return;
+    }
+    if (!confirm(`Send email to ${recipients?.recipients.length} recipient(s)?`)) return;
+    setBusy(true);
+    try {
+      await api(`/api/class-types/${classType.id}/email`, {
+        method: 'POST',
+        body: JSON.stringify({ subject: subject.trim(), body: body.trim() }),
+      });
+      onSent();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const recCount = recipients?.recipients?.length ?? 0;
+  const noEmail = recipients?.withoutEmail ?? 0;
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h2>Email {classType.name}</h2>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+
+        {loading ? (
+          <p className="sub">Loading recipients…</p>
+        ) : (
+          <>
+            <p className="sub">
+              <strong>{recCount}</strong> recipient
+              {recCount === 1 ? '' : 's'} (active members with credits + email).
+              {noEmail > 0 ? (
+                <>
+                  {' '}
+                  <span className="sub-warn">
+                    {noEmail} active member{noEmail === 1 ? ' has' : 's have'} credits but no email — they
+                    will not be notified.
+                  </span>
+                </>
+              ) : null}
+            </p>
+
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => setShowRecipients((v) => !v)}
+            >
+              {showRecipients ? 'Hide' : 'Show'} recipient list
+            </button>
+            {showRecipients ? (
+              <ul className="recipients-list">
+                {recipients.recipients.map((r) => (
+                  <li key={r.id}>
+                    <span>{r.name}</span>
+                    <span className="recipient-email">{r.email}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+
+            <label>
+              Subject
+              <input
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                maxLength={200}
+              />
+            </label>
+            <label>
+              Message body
+              <textarea
+                rows={10}
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                maxLength={10000}
+              />
+            </label>
+            <p className="sub">
+              All recipients will be in BCC for privacy. From = your owner email.
+            </p>
+
+            <div className="modal-actions">
+              <button type="button" className="secondary" onClick={onClose}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={send}
+                disabled={busy || !recCount || !subject.trim() || !body.trim()}
+              >
+                {busy ? 'Sending…' : `Send to ${recCount}`}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1128,6 +1297,66 @@ function SettingsView({ onBack, setErr }) {
           <p className="sub">Save SMTP password first.</p>
         ) : null}
       </div>
+
+      <ClassEmailHistory setErr={setErr} />
     </>
+  );
+}
+
+function ClassEmailHistory({ setErr }) {
+  const [items, setItems] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await api('/api/class-messages');
+        if (!cancelled) setItems(list);
+      } catch (e) {
+        if (!cancelled) setErr(e.message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [setErr]);
+
+  return (
+    <div className="card">
+      <h2>Class email history</h2>
+      {loading ? <p className="sub">Loading…</p> : null}
+      {!loading && items?.length === 0 ? (
+        <p className="sub">No class emails sent yet.</p>
+      ) : null}
+      {!loading && items?.length ? (
+        <ul className="message-history">
+          {items.map((m) => (
+            <li key={m.id}>
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => setExpanded((id) => (id === m.id ? null : m.id))}
+              >
+                {expanded === m.id ? '▾' : '▸'} {toLocalDateTime(m.sentAt)} — {m.className} —{' '}
+                {m.subject} ({m.recipientCount} recipient{m.recipientCount === 1 ? '' : 's'})
+              </button>
+              {expanded === m.id ? (
+                <div className="message-detail">
+                  <p className="sub">
+                    <strong>Recipients:</strong>{' '}
+                    {m.recipientEmails.length ? m.recipientEmails.join(', ') : '—'}
+                  </p>
+                  <pre className="message-body">{m.body}</pre>
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   );
 }

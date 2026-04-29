@@ -461,6 +461,84 @@ function getClubSummary() {
   };
 }
 
+/**
+ * Returns the list of members who currently have a non-zero, non-expired balance
+ * in the given class AND a non-empty email AND are active.
+ * Used as the recipient list for "Email this class" (cancellation messages).
+ */
+function getEmailRecipientsForClass(classId) {
+  return db
+    .prepare(
+      `SELECT m.id, m.name, m.email,
+              COALESCE(SUM(b.quantity - b.used), 0) AS balance
+       FROM members m
+       JOIN credit_batches b ON b.member_id = m.id
+       WHERE m.active = 1
+         AND m.email IS NOT NULL AND TRIM(m.email) <> ''
+         AND b.class_id = ?
+         AND b.quantity > b.used
+         AND (b.expires_at IS NULL OR b.expires_at >= date('now', 'localtime'))
+       GROUP BY m.id
+       ORDER BY m.name COLLATE NOCASE`
+    )
+    .all(classId);
+}
+
+/** All active members of a class regardless of email — used to compute counts for warnings. */
+function countActiveCreditMembersForClass(classId) {
+  const row = db
+    .prepare(
+      `SELECT COUNT(DISTINCT m.id) AS n
+       FROM members m
+       JOIN credit_batches b ON b.member_id = m.id
+       WHERE m.active = 1
+         AND b.class_id = ?
+         AND b.quantity > b.used
+         AND (b.expires_at IS NULL OR b.expires_at >= date('now', 'localtime'))`
+    )
+    .get(classId);
+  return row?.n ?? 0;
+}
+
+function recordClassMessage({ classId, subject, body, recipientEmails }) {
+  const info = db
+    .prepare(
+      `INSERT INTO class_messages (class_id, subject, body, recipient_count, recipient_emails)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+    .run(classId, subject, body, recipientEmails.length, JSON.stringify(recipientEmails));
+  return Number(info.lastInsertRowid);
+}
+
+function listClassMessages(limit = 50) {
+  const rows = db
+    .prepare(
+      `SELECT m.id, m.class_id, c.name AS class_name, m.subject, m.body,
+              m.recipient_count, m.recipient_emails, m.sent_at
+       FROM class_messages m
+       LEFT JOIN class_types c ON c.id = m.class_id
+       ORDER BY m.id DESC
+       LIMIT ?`
+    )
+    .all(limit);
+  return rows.map((r) => ({
+    id: r.id,
+    classId: r.class_id,
+    className: r.class_name || '—',
+    subject: r.subject,
+    body: r.body,
+    recipientCount: r.recipient_count,
+    recipientEmails: (() => {
+      try {
+        return JSON.parse(r.recipient_emails || '[]');
+      } catch {
+        return [];
+      }
+    })(),
+    sentAt: r.sent_at,
+  }));
+}
+
 function getSettings() {
   const row = db
     .prepare(
@@ -529,4 +607,8 @@ export {
   recordAttendance,
   getSettings,
   updateSettings,
+  getEmailRecipientsForClass,
+  countActiveCreditMembersForClass,
+  recordClassMessage,
+  listClassMessages,
 };

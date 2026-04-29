@@ -16,6 +16,10 @@ import {
   recordAttendance,
   getSettings,
   updateSettings,
+  getEmailRecipientsForClass,
+  countActiveCreditMembersForClass,
+  recordClassMessage,
+  listClassMessages,
 } from './db.js';
 import { log, requestLogger, errorLogger } from './logger.js';
 import { sendMail, resetTransport } from './mailer.js';
@@ -73,6 +77,76 @@ app.delete('/api/class-types/:id', (req, res) => {
     return res.status(status).json({ error: result.error });
   }
   res.status(204).end();
+});
+
+app.get('/api/class-types/:id/email-recipients', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Invalid id' });
+  const cls = db.prepare('SELECT id, name FROM class_types WHERE id = ?').get(id);
+  if (!cls) return res.status(404).json({ error: 'Not found' });
+  const recipients = getEmailRecipientsForClass(id);
+  const totalActive = countActiveCreditMembersForClass(id);
+  res.json({
+    classId: cls.id,
+    className: cls.name,
+    recipients: recipients.map((r) => ({
+      id: r.id,
+      name: r.name,
+      email: r.email,
+      balance: r.balance,
+    })),
+    totalActiveMembers: totalActive,
+    withoutEmail: totalActive - recipients.length,
+  });
+});
+
+app.post('/api/class-types/:id/email', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Invalid id' });
+  const cls = db.prepare('SELECT id, name FROM class_types WHERE id = ?').get(id);
+  if (!cls) return res.status(404).json({ error: 'Not found' });
+  const subject = String(req.body?.subject ?? '').trim();
+  const body = String(req.body?.body ?? '').trim();
+  if (!subject) return res.status(400).json({ error: 'Subject is required' });
+  if (subject.length > 200) return res.status(400).json({ error: 'Subject must be at most 200 characters' });
+  if (!body) return res.status(400).json({ error: 'Body is required' });
+  if (body.length > 10000) return res.status(400).json({ error: 'Body must be at most 10000 characters' });
+  const settings = getSettings();
+  if (!settings?.owner_email) {
+    return res.status(400).json({ error: 'Owner email is not set in Settings.' });
+  }
+  const recipients = getEmailRecipientsForClass(id);
+  if (!recipients.length) {
+    return res.status(400).json({ error: 'No active members with credits and an email in this class.' });
+  }
+  const recipientEmails = recipients.map((r) => r.email);
+  const result = await sendMail({
+    bcc: recipientEmails,
+    subject,
+    text: body,
+  });
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error });
+  }
+  const messageId = recordClassMessage({
+    classId: id,
+    subject,
+    body,
+    recipientEmails,
+  });
+  log.info(
+    `Class email sent: classId=${id} ("${cls.name}") subject="${subject}" recipients=${recipients.length} messageRowId=${messageId}`
+  );
+  res.status(201).json({
+    ok: true,
+    classMessageId: messageId,
+    recipientCount: recipients.length,
+    smtpMessageId: result.messageId,
+  });
+});
+
+app.get('/api/class-messages', (_req, res) => {
+  res.json(listClassMessages(50));
 });
 
 app.get('/api/summary', (_req, res) => {

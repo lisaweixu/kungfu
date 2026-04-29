@@ -524,3 +524,150 @@ button.owner-class-remove {
   color: #059669;
   font-size: 0.95em;
 }
+
+.summary-class-email-btn {
+  display: inline-block;
+  margin-top: 0.25rem;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.75rem;
+  border: 1px solid #d4d4d8;
+  border-radius: 4px;
+  background: #fafafa;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.summary-class-email-btn:hover {
+  background: #f4f4f5;
+  border-color: #a1a1aa;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 2rem 1rem;
+  z-index: 100;
+  overflow-y: auto;
+}
+
+.modal-panel {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1.25rem;
+  max-width: 36rem;
+  width: 100%;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  margin: auto;
+}
+
+.modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.modal-head h2 {
+  margin: 0;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: #71717a;
+  line-height: 1;
+  padding: 0 0.25rem;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.modal-panel textarea {
+  width: 100%;
+  font-family: inherit;
+  font-size: 1em;
+  padding: 0.5rem;
+  border: 1px solid #d4d4d8;
+  border-radius: 4px;
+  resize: vertical;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: #1d4ed8;
+  cursor: pointer;
+  padding: 0.25rem 0;
+  font-size: 0.95em;
+  text-align: left;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+.recipients-list {
+  list-style: none;
+  padding: 0.5rem;
+  margin: 0.5rem 0;
+  background: #f4f4f5;
+  border-radius: 4px;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+.recipients-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.15rem 0;
+  font-size: 0.9em;
+}
+
+.recipient-email {
+  color: #52525b;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.sub-warn {
+  color: #b45309;
+}
+
+.message-history {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.message-history li {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.message-history li:last-child {
+  border-bottom: none;
+}
+
+.message-detail {
+  margin: 0.4rem 0 0.6rem 1.25rem;
+}
+
+.message-body {
+  background: #f4f4f5;
+  padding: 0.5rem;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 0.9em;
+  margin: 0.25rem 0 0;
+}
