@@ -593,10 +593,15 @@ const VALIDITY_OPTIONS = [
   { value: 'never', label: 'Never expires', months: null },
 ];
 
+function localDateIso(d = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function isoDatePlusMonths(months) {
   const d = new Date();
   d.setMonth(d.getMonth() + months);
-  return d.toISOString().slice(0, 10);
+  return localDateIso(d);
 }
 
 function MemberDetail({ detail, classTypes, onBack, onRefresh, setErr }) {
@@ -790,7 +795,7 @@ function MemberDetail({ detail, classTypes, onBack, onRefresh, setErr }) {
               </thead>
               <tbody>
                 {batches.map((b) => {
-                  const today = new Date().toISOString().slice(0, 10);
+                  const today = localDateIso();
                   const daysLeft = b.expiresAt
                     ? Math.ceil((new Date(b.expiresAt) - new Date(today)) / 86400000)
                     : null;

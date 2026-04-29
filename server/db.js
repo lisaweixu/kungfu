@@ -118,6 +118,12 @@ if (!memberColumns.some((c) => c.name === 'email')) {
 
 db.exec('CREATE INDEX IF NOT EXISTS idx_ledger_class ON ledger(class_id)');
 
+/** Local YYYY-MM-DD (matches SQLite's date('now', 'localtime')). */
+function localDateIso(d = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 migrateLedgerToBatchesIfNeeded();
 
 /**
@@ -134,7 +140,7 @@ function migrateLedgerToBatchesIfNeeded() {
   const expiresAt = (() => {
     const d = new Date();
     d.setDate(d.getDate() + 2);
-    return d.toISOString().slice(0, 10);
+    return localDateIso(d);
   })();
 
   const insertBatch = db.prepare(
@@ -265,7 +271,7 @@ function balanceForMemberId(memberId) {
     .prepare(
       `SELECT COALESCE(SUM(quantity - used), 0) AS b FROM credit_batches
        WHERE member_id = ?
-         AND (expires_at IS NULL OR expires_at >= date('now'))`
+         AND (expires_at IS NULL OR expires_at >= date('now', 'localtime'))`
     )
     .get(memberId);
   return row?.b ?? 0;
@@ -276,7 +282,7 @@ function balanceForMemberClass(memberId, classId) {
     .prepare(
       `SELECT COALESCE(SUM(quantity - used), 0) AS b FROM credit_batches
        WHERE member_id = ? AND class_id = ?
-         AND (expires_at IS NULL OR expires_at >= date('now'))`
+         AND (expires_at IS NULL OR expires_at >= date('now', 'localtime'))`
     )
     .get(memberId, classId);
   return row?.b ?? 0;
@@ -287,7 +293,7 @@ function balancesForMember(memberId) {
   const stmt = db.prepare(
     `SELECT COALESCE(SUM(quantity - used), 0) AS b FROM credit_batches
      WHERE member_id = ? AND class_id = ?
-       AND (expires_at IS NULL OR expires_at >= date('now'))`
+       AND (expires_at IS NULL OR expires_at >= date('now', 'localtime'))`
   );
   return types.map((t) => ({
     classId: t.id,
@@ -304,7 +310,7 @@ function activeBatchesForMember(memberId) {
        FROM credit_batches
        WHERE member_id = ?
          AND quantity > used
-         AND (expires_at IS NULL OR expires_at >= date('now'))
+         AND (expires_at IS NULL OR expires_at >= date('now', 'localtime'))
        ORDER BY (expires_at IS NULL), expires_at ASC, created_at ASC, id ASC`
     )
     .all(memberId);
@@ -360,7 +366,7 @@ function recordAttendance(memberId, classId, count, note) {
         `SELECT id, quantity, used FROM credit_batches
          WHERE member_id = ? AND class_id = ?
            AND quantity > used
-           AND (expires_at IS NULL OR expires_at >= date('now'))
+           AND (expires_at IS NULL OR expires_at >= date('now', 'localtime'))
          ORDER BY (expires_at IS NULL), expires_at ASC, created_at ASC, id ASC`
       )
       .all(memberId, classId);
@@ -398,7 +404,7 @@ function getClubSummary() {
     .prepare(
       `SELECT member_id, class_id, COALESCE(SUM(quantity - used), 0) AS balance
        FROM credit_batches
-       WHERE expires_at IS NULL OR expires_at >= date('now')
+       WHERE expires_at IS NULL OR expires_at >= date('now', 'localtime')
        GROUP BY member_id, class_id`
     )
     .all();

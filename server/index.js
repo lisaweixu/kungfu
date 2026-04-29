@@ -207,7 +207,8 @@ function resolveExpiresAt(body, settings) {
   const months = Number(settings?.default_validity_months) || 12;
   const d = new Date();
   d.setMonth(d.getMonth() + months);
-  return d.toISOString().slice(0, 10);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 app.post('/api/members/:id/purchase', (req, res) => {
