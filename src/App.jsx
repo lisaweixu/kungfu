@@ -574,7 +574,14 @@ function NewMemberForm({ onCancel, onCreated, setErr }) {
   );
 }
 
-function defaultExpiryIso(months = 12) {
+const VALIDITY_OPTIONS = [
+  { value: '3m', label: '3 months', months: 3 },
+  { value: '6m', label: '6 months', months: 6 },
+  { value: '12m', label: '12 months', months: 12 },
+  { value: 'never', label: 'Never expires', months: null },
+];
+
+function isoDatePlusMonths(months) {
   const d = new Date();
   d.setMonth(d.getMonth() + months);
   return d.toISOString().slice(0, 10);
@@ -589,8 +596,7 @@ function MemberDetail({ detail, classTypes, onBack, onRefresh, setErr }) {
   const [takeCount, setTakeCount] = useState(1);
   const [notePurchase, setNotePurchase] = useState('');
   const [noteAttend, setNoteAttend] = useState('');
-  const [purchaseExpiry, setPurchaseExpiry] = useState(defaultExpiryIso(12));
-  const [purchaseNoExpiry, setPurchaseNoExpiry] = useState(false);
+  const [purchaseValidity, setPurchaseValidity] = useState('12m');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -609,17 +615,9 @@ function MemberDetail({ detail, classTypes, onBack, onRefresh, setErr }) {
 
   const doPurchase = async () => {
     setErr(null);
-    if (!purchaseNoExpiry) {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(purchaseExpiry)) {
-        setErr('Pick an expiry date or check "Never expires".');
-        return;
-      }
-      const today = new Date().toISOString().slice(0, 10);
-      if (purchaseExpiry < today) {
-        setErr('Expiry date must be today or later.');
-        return;
-      }
-    }
+    const opt = VALIDITY_OPTIONS.find((o) => o.value === purchaseValidity);
+    const noExpiry = opt?.months == null;
+    const expiresAt = noExpiry ? null : isoDatePlusMonths(opt.months);
     setBusy(true);
     try {
       await api(`/api/members/${member.id}/purchase`, {
@@ -628,8 +626,8 @@ function MemberDetail({ detail, classTypes, onBack, onRefresh, setErr }) {
           classId: purchaseClassId,
           classes: classesToAdd,
           note: notePurchase,
-          expiresAt: purchaseNoExpiry ? null : purchaseExpiry,
-          noExpiry: purchaseNoExpiry,
+          expiresAt,
+          noExpiry,
         }),
       });
       setNotePurchase('');
@@ -736,25 +734,19 @@ function MemberDetail({ detail, classTypes, onBack, onRefresh, setErr }) {
             />
           </label>
         </div>
-        <div className="row2">
-          <label>
-            Expires on
-            <input
-              type="date"
-              value={purchaseExpiry}
-              disabled={purchaseNoExpiry}
-              onChange={(e) => setPurchaseExpiry(e.target.value)}
-            />
-          </label>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={purchaseNoExpiry}
-              onChange={(e) => setPurchaseNoExpiry(e.target.checked)}
-            />
-            Never expires
-          </label>
-        </div>
+        <label>
+          Valid for
+          <select
+            value={purchaseValidity}
+            onChange={(e) => setPurchaseValidity(e.target.value)}
+          >
+            {VALIDITY_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <label>
           Note (optional)
           <input
