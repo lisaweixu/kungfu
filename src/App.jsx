@@ -17,6 +17,18 @@ function memberMatchesQuery(m, needleNorm) {
   );
 }
 
+/** SQLite stores timestamps as UTC strings ('YYYY-MM-DD HH:MM:SS', no Z); render in local time. */
+function toLocalDateTime(s) {
+  if (!s) return '';
+  const utc = s.includes('T')
+    ? s.endsWith('Z') ? s : s + 'Z'
+    : s.replace(' ', 'T') + 'Z';
+  const d = new Date(utc);
+  if (Number.isNaN(d.getTime())) return s;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 async function api(path, options = {}) {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json', ...options.headers },
@@ -870,7 +882,7 @@ function MemberDetail({ detail, classTypes, onBack, onRefresh, setErr }) {
             <tbody>
               {ledger.map((row) => (
                 <tr key={row.id}>
-                  <td>{row.created_at?.replace('T', ' ').slice(0, 19)}</td>
+                  <td>{toLocalDateTime(row.created_at)}</td>
                   <td className="ledger-class">{row.class_name || '—'}</td>
                   <td>{row.kind}</td>
                   <td className="num">{row.delta > 0 ? `+${row.delta}` : row.delta}</td>
