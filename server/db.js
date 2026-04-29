@@ -46,6 +46,61 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_ledger_member ON ledger(member_id);
+
+  CREATE TABLE IF NOT EXISTS credit_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    member_id INTEGER NOT NULL,
+    class_id INTEGER NOT NULL,
+    quantity INTEGER NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0,
+    expires_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    note TEXT,
+    source_ledger_id INTEGER,
+    FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
+    FOREIGN KEY (class_id) REFERENCES class_types(id),
+    FOREIGN KEY (source_ledger_id) REFERENCES ledger(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_batches_member_class ON credit_batches(member_id, class_id);
+  CREATE INDEX IF NOT EXISTS idx_batches_expires ON credit_batches(expires_at);
+
+  CREATE TABLE IF NOT EXISTS settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    owner_name TEXT,
+    owner_email TEXT,
+    smtp_host TEXT,
+    smtp_port INTEGER,
+    smtp_user TEXT,
+    smtp_pass TEXT,
+    smtp_secure INTEGER NOT NULL DEFAULT 1,
+    default_validity_months INTEGER NOT NULL DEFAULT 12,
+    reminders_enabled INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  INSERT OR IGNORE INTO settings (id) VALUES (1);
+
+  CREATE TABLE IF NOT EXISTS class_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    class_id INTEGER NOT NULL,
+    subject TEXT NOT NULL,
+    body TEXT NOT NULL,
+    recipient_count INTEGER NOT NULL,
+    recipient_emails TEXT NOT NULL,
+    sent_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (class_id) REFERENCES class_types(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS reminders_sent (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    member_id INTEGER NOT NULL,
+    class_id INTEGER NOT NULL,
+    trigger_kind TEXT NOT NULL,
+    trigger_key TEXT NOT NULL,
+    sent_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (member_id, class_id, trigger_kind, trigger_key),
+    FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
+    FOREIGN KEY (class_id) REFERENCES class_types(id) ON DELETE CASCADE
+  );
 `);
 
 const ledgerColumns = db.prepare('PRAGMA table_info(ledger)').all();
@@ -62,6 +117,78 @@ if (!memberColumns.some((c) => c.name === 'email')) {
 }
 
 db.exec('CREATE INDEX IF NOT EXISTS idx_ledger_class ON ledger(class_id)');
+
+migrateLedgerToBatchesIfNeeded();
+
+/**
+ * One-time migration: convert existing ledger purchase/attendance rows into credit_batches.
+ * Runs only when ledger has rows but credit_batches is empty.
+ * Existing purchases become batches that expire 2 days from now (so reminders can be tested).
+ * Existing attendances are FIFO-consumed against those batches.
+ */
+function migrateLedgerToBatchesIfNeeded() {
+  const ledgerCount = db.prepare('SELECT COUNT(*) AS n FROM ledger').get().n;
+  const batchCount = db.prepare('SELECT COUNT(*) AS n FROM credit_batches').get().n;
+  if (batchCount > 0 || ledgerCount === 0) return;
+
+  const expiresAt = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 2);
+    return d.toISOString().slice(0, 10);
+  })();
+
+  const insertBatch = db.prepare(
+    `INSERT INTO credit_batches
+       (member_id, class_id, quantity, used, expires_at, created_at, note, source_ledger_id)
+     VALUES (?, ?, ?, 0, ?, ?, ?, ?)`
+  );
+  const updateUsed = db.prepare(
+    'UPDATE credit_batches SET used = ? WHERE id = ?'
+  );
+  const pickFifo = db.prepare(
+    `SELECT id, quantity, used FROM credit_batches
+     WHERE member_id = ? AND class_id = ? AND quantity > used
+     ORDER BY (expires_at IS NULL), expires_at ASC, created_at ASC, id ASC`
+  );
+
+  const ledgerRows = db
+    .prepare('SELECT id, member_id, class_id, delta, kind, note, created_at FROM ledger ORDER BY id ASC')
+    .all();
+
+  const tx = db.prepare('BEGIN');
+  const commit = db.prepare('COMMIT');
+  const rollback = db.prepare('ROLLBACK');
+  tx.run();
+  try {
+    for (const row of ledgerRows) {
+      if (row.delta > 0) {
+        insertBatch.run(
+          row.member_id,
+          row.class_id,
+          row.delta,
+          expiresAt,
+          row.created_at,
+          row.note,
+          row.id
+        );
+      } else if (row.delta < 0) {
+        let need = -row.delta;
+        const candidates = pickFifo.all(row.member_id, row.class_id);
+        for (const b of candidates) {
+          if (need <= 0) break;
+          const free = b.quantity - b.used;
+          const take = Math.min(free, need);
+          updateUsed.run(b.used + take, b.id);
+          need -= take;
+        }
+      }
+    }
+    commit.run();
+  } catch (err) {
+    rollback.run();
+    throw err;
+  }
+}
 
 const CLASS_SEED = [
   [1, '长拳 Long Fist', 1],
@@ -129,9 +256,17 @@ function deleteClassTypeById(rawId) {
   return { ok: true };
 }
 
+/**
+ * Sums remaining (quantity - used) across all non-expired batches.
+ * A batch is non-expired if expires_at IS NULL or expires_at >= today.
+ */
 function balanceForMemberId(memberId) {
   const row = db
-    .prepare('SELECT COALESCE(SUM(delta), 0) AS b FROM ledger WHERE member_id = ?')
+    .prepare(
+      `SELECT COALESCE(SUM(quantity - used), 0) AS b FROM credit_batches
+       WHERE member_id = ?
+         AND (expires_at IS NULL OR expires_at >= date('now'))`
+    )
     .get(memberId);
   return row?.b ?? 0;
 }
@@ -139,7 +274,9 @@ function balanceForMemberId(memberId) {
 function balanceForMemberClass(memberId, classId) {
   const row = db
     .prepare(
-      'SELECT COALESCE(SUM(delta), 0) AS b FROM ledger WHERE member_id = ? AND class_id = ?'
+      `SELECT COALESCE(SUM(quantity - used), 0) AS b FROM credit_batches
+       WHERE member_id = ? AND class_id = ?
+         AND (expires_at IS NULL OR expires_at >= date('now'))`
     )
     .get(memberId, classId);
   return row?.b ?? 0;
@@ -148,13 +285,104 @@ function balanceForMemberClass(memberId, classId) {
 function balancesForMember(memberId) {
   const types = listClassTypes();
   const stmt = db.prepare(
-    'SELECT COALESCE(SUM(delta), 0) AS b FROM ledger WHERE member_id = ? AND class_id = ?'
+    `SELECT COALESCE(SUM(quantity - used), 0) AS b FROM credit_batches
+     WHERE member_id = ? AND class_id = ?
+       AND (expires_at IS NULL OR expires_at >= date('now'))`
   );
   return types.map((t) => ({
     classId: t.id,
     name: t.name,
     balance: stmt.get(memberId, t.id).b,
   }));
+}
+
+/** Returns all non-expired batches with credits left for a member, ordered by FIFO. */
+function activeBatchesForMember(memberId) {
+  return db
+    .prepare(
+      `SELECT id, member_id, class_id, quantity, used, expires_at, created_at, note
+       FROM credit_batches
+       WHERE member_id = ?
+         AND quantity > used
+         AND (expires_at IS NULL OR expires_at >= date('now'))
+       ORDER BY (expires_at IS NULL), expires_at ASC, created_at ASC, id ASC`
+    )
+    .all(memberId);
+}
+
+/**
+ * Records a purchase: inserts ledger row + a new credit_batch.
+ * @param {number} memberId
+ * @param {number} classId
+ * @param {number} quantity Positive integer.
+ * @param {string|null} expiresAt ISO date 'YYYY-MM-DD', or null for no expiry.
+ * @param {string|null} note
+ */
+function recordPurchase(memberId, classId, quantity, expiresAt, note) {
+  const tx = db.prepare('BEGIN');
+  const commit = db.prepare('COMMIT');
+  const rollback = db.prepare('ROLLBACK');
+  tx.run();
+  try {
+    const ledgerInfo = db
+      .prepare('INSERT INTO ledger (member_id, delta, kind, note, class_id) VALUES (?, ?, ?, ?, ?)')
+      .run(memberId, quantity, 'purchase', note || null, classId);
+    const ledgerId = Number(ledgerInfo.lastInsertRowid);
+    db.prepare(
+      `INSERT INTO credit_batches
+         (member_id, class_id, quantity, used, expires_at, note, source_ledger_id)
+       VALUES (?, ?, ?, 0, ?, ?, ?)`
+    ).run(memberId, classId, quantity, expiresAt || null, note || null, ledgerId);
+    commit.run();
+    return { ledgerId };
+  } catch (err) {
+    rollback.run();
+    throw err;
+  }
+}
+
+/**
+ * Records attendance: FIFO-consumes from non-expired batches, inserts a single ledger row.
+ * @returns {{ ok: true } | { ok: false, error: string, balance: number }}
+ */
+function recordAttendance(memberId, classId, count, note) {
+  const balance = balanceForMemberClass(memberId, classId);
+  if (balance < count) {
+    return { ok: false, error: 'Not enough credits for this class', balance };
+  }
+  const tx = db.prepare('BEGIN');
+  const commit = db.prepare('COMMIT');
+  const rollback = db.prepare('ROLLBACK');
+  tx.run();
+  try {
+    const batches = db
+      .prepare(
+        `SELECT id, quantity, used FROM credit_batches
+         WHERE member_id = ? AND class_id = ?
+           AND quantity > used
+           AND (expires_at IS NULL OR expires_at >= date('now'))
+         ORDER BY (expires_at IS NULL), expires_at ASC, created_at ASC, id ASC`
+      )
+      .all(memberId, classId);
+    let need = count;
+    const update = db.prepare('UPDATE credit_batches SET used = ? WHERE id = ?');
+    for (const b of batches) {
+      if (need <= 0) break;
+      const free = b.quantity - b.used;
+      const take = Math.min(free, need);
+      update.run(b.used + take, b.id);
+      need -= take;
+    }
+    if (need > 0) throw new Error('Insufficient batches (race condition)');
+    db.prepare(
+      'INSERT INTO ledger (member_id, delta, kind, note, class_id) VALUES (?, ?, ?, ?, ?)'
+    ).run(memberId, -count, 'attendance', note || null, classId);
+    commit.run();
+    return { ok: true };
+  } catch (err) {
+    rollback.run();
+    throw err;
+  }
 }
 
 /** All members with per-class balance and attendance (visit) totals for the summary page. */
@@ -168,8 +396,9 @@ function getClubSummary() {
 
   const balanceRows = db
     .prepare(
-      `SELECT member_id, class_id, COALESCE(SUM(delta), 0) AS balance
-       FROM ledger
+      `SELECT member_id, class_id, COALESCE(SUM(quantity - used), 0) AS balance
+       FROM credit_batches
+       WHERE expires_at IS NULL OR expires_at >= date('now')
        GROUP BY member_id, class_id`
     )
     .all();
@@ -226,13 +455,72 @@ function getClubSummary() {
   };
 }
 
+function getSettings() {
+  const row = db
+    .prepare(
+      `SELECT id, owner_name, owner_email, smtp_host, smtp_port, smtp_user, smtp_pass,
+              smtp_secure, default_validity_months, reminders_enabled, updated_at
+       FROM settings WHERE id = 1`
+    )
+    .get();
+  if (!row) return null;
+  return {
+    ...row,
+    smtp_secure: Boolean(row.smtp_secure),
+    reminders_enabled: Boolean(row.reminders_enabled),
+  };
+}
+
+/**
+ * Updates settings (only provided fields). Returns the updated row.
+ * @param {Partial<{
+ *   owner_name: string|null, owner_email: string|null,
+ *   smtp_host: string|null, smtp_port: number|null,
+ *   smtp_user: string|null, smtp_pass: string|null,
+ *   smtp_secure: boolean, default_validity_months: number,
+ *   reminders_enabled: boolean
+ * }>} patch
+ */
+function updateSettings(patch) {
+  const allowed = [
+    'owner_name',
+    'owner_email',
+    'smtp_host',
+    'smtp_port',
+    'smtp_user',
+    'smtp_pass',
+    'smtp_secure',
+    'default_validity_months',
+    'reminders_enabled',
+  ];
+  const sets = [];
+  const values = [];
+  for (const k of allowed) {
+    if (k in patch) {
+      let v = patch[k];
+      if (k === 'smtp_secure' || k === 'reminders_enabled') v = v ? 1 : 0;
+      sets.push(`${k} = ?`);
+      values.push(v);
+    }
+  }
+  if (!sets.length) return getSettings();
+  sets.push("updated_at = datetime('now')");
+  db.prepare(`UPDATE settings SET ${sets.join(', ')} WHERE id = 1`).run(...values);
+  return getSettings();
+}
+
 export {
   db,
   balanceForMemberId,
   balanceForMemberClass,
   balancesForMember,
+  activeBatchesForMember,
   listClassTypes,
   addClassType,
   deleteClassTypeById,
   getClubSummary,
+  recordPurchase,
+  recordAttendance,
+  getSettings,
+  updateSettings,
 };

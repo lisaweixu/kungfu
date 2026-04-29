@@ -7,12 +7,18 @@ import {
   balanceForMemberId,
   balanceForMemberClass,
   balancesForMember,
+  activeBatchesForMember,
   listClassTypes,
   addClassType,
   deleteClassTypeById,
   getClubSummary,
+  recordPurchase,
+  recordAttendance,
+  getSettings,
+  updateSettings,
 } from './db.js';
 import { log, requestLogger, errorLogger } from './logger.js';
+import { sendMail, resetTransport } from './mailer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
@@ -94,10 +100,24 @@ app.get('/api/members/:id', (req, res) => {
     .all(id);
   const balance = balanceForMemberId(id);
   const balancesByClass = balancesForMember(id);
+  const batchesRaw = activeBatchesForMember(id);
+  const classNameById = Object.fromEntries(listClassTypes().map((c) => [c.id, c.name]));
+  const batches = batchesRaw.map((b) => ({
+    id: b.id,
+    classId: b.class_id,
+    className: classNameById[b.class_id] || '—',
+    quantity: b.quantity,
+    used: b.used,
+    remaining: b.quantity - b.used,
+    expiresAt: b.expires_at,
+    note: b.note,
+    createdAt: b.created_at,
+  }));
   res.json({
     member: { ...member, active: Boolean(member.active) },
     balance,
     balancesByClass,
+    batches,
     ledger,
   });
 });
@@ -177,6 +197,19 @@ app.patch('/api/members/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+function resolveExpiresAt(body, settings) {
+  if (body?.noExpiry === true || body?.expiresAt === null) return null;
+  if (typeof body?.expiresAt === 'string' && body.expiresAt.trim()) {
+    const s = body.expiresAt.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return undefined;
+    return s;
+  }
+  const months = Number(settings?.default_validity_months) || 12;
+  const d = new Date();
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().slice(0, 10);
+}
+
 app.post('/api/members/:id/purchase', (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
@@ -190,12 +223,15 @@ app.post('/api/members/:id/purchase', (req, res) => {
   if (!type) return res.status(400).json({ error: 'Unknown class type' });
   const n = Number(req.body?.classes);
   if (!Number.isInteger(n) || n <= 0 || n > 999) {
-    return res.status(400).json({ error: 'classes must be an integer 1–999' });
+    return res.status(400).json({ error: 'classes must be an integer 1-999' });
+  }
+  const settings = getSettings();
+  const expiresAt = resolveExpiresAt(req.body, settings);
+  if (expiresAt === undefined) {
+    return res.status(400).json({ error: 'expiresAt must be ISO date YYYY-MM-DD or null' });
   }
   const note = req.body?.note != null ? String(req.body.note).trim() : null;
-  db.prepare(
-    'INSERT INTO ledger (member_id, delta, kind, note, class_id) VALUES (?, ?, ?, ?, ?)'
-  ).run(id, n, 'purchase', note || null, classId);
+  recordPurchase(id, classId, n, expiresAt, note || null);
   res.status(201).json({
     balance: balanceForMemberId(id),
     balancesByClass: balancesForMember(id),
@@ -215,24 +251,87 @@ app.post('/api/members/:id/attend', (req, res) => {
   if (!type) return res.status(400).json({ error: 'Unknown class type' });
   const count = req.body?.count != null ? Number(req.body.count) : 1;
   if (!Number.isInteger(count) || count <= 0 || count > 50) {
-    return res.status(400).json({ error: 'count must be an integer 1–50' });
-  }
-  const classBalance = balanceForMemberClass(id, classId);
-  if (classBalance < count) {
-    return res.status(400).json({
-      error: 'Not enough credits for this class',
-      balance: classBalance,
-      classId,
-    });
+    return res.status(400).json({ error: 'count must be an integer 1-50' });
   }
   const note = req.body?.note != null ? String(req.body.note).trim() : null;
-  db.prepare(
-    'INSERT INTO ledger (member_id, delta, kind, note, class_id) VALUES (?, ?, ?, ?, ?)'
-  ).run(id, -count, 'attendance', note || null, classId);
+  const result = recordAttendance(id, classId, count, note || null);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error, balance: result.balance, classId });
+  }
   res.status(201).json({
     balance: balanceForMemberId(id),
     balancesByClass: balancesForMember(id),
   });
+});
+
+app.get('/api/settings', (_req, res) => {
+  const s = getSettings();
+  if (!s) return res.json(null);
+  const { smtp_pass, ...safe } = s;
+  res.json({ ...safe, smtp_pass_set: Boolean(smtp_pass) });
+});
+
+app.patch('/api/settings', (req, res) => {
+  const body = req.body || {};
+  const patch = {};
+  if ('owner_name' in body) patch.owner_name = body.owner_name == null ? null : String(body.owner_name).trim() || null;
+  if ('owner_email' in body) {
+    const v = body.owner_email == null ? null : String(body.owner_email).trim() || null;
+    if (v && !/^\S+@\S+\.\S+$/.test(v)) return res.status(400).json({ error: 'owner_email is invalid' });
+    patch.owner_email = v;
+  }
+  if ('smtp_host' in body) patch.smtp_host = body.smtp_host == null ? null : String(body.smtp_host).trim() || null;
+  if ('smtp_port' in body) {
+    const v = body.smtp_port == null || body.smtp_port === '' ? null : Number(body.smtp_port);
+    if (v != null && (!Number.isInteger(v) || v < 1 || v > 65535)) {
+      return res.status(400).json({ error: 'smtp_port must be 1-65535' });
+    }
+    patch.smtp_port = v;
+  }
+  if ('smtp_user' in body) patch.smtp_user = body.smtp_user == null ? null : String(body.smtp_user).trim() || null;
+  if ('smtp_pass' in body) {
+    patch.smtp_pass = body.smtp_pass == null || body.smtp_pass === '' ? null : String(body.smtp_pass);
+  }
+  if ('smtp_secure' in body) patch.smtp_secure = Boolean(body.smtp_secure);
+  if ('default_validity_months' in body) {
+    const v = Number(body.default_validity_months);
+    if (!Number.isInteger(v) || v < 1 || v > 120) {
+      return res.status(400).json({ error: 'default_validity_months must be 1-120' });
+    }
+    patch.default_validity_months = v;
+  }
+  if ('reminders_enabled' in body) patch.reminders_enabled = Boolean(body.reminders_enabled);
+  const updated = updateSettings(patch);
+  resetTransport();
+  const { smtp_pass, ...safe } = updated;
+  res.json({ ...safe, smtp_pass_set: Boolean(smtp_pass) });
+});
+
+app.post('/api/settings/test-email', async (req, res) => {
+  const s = getSettings();
+  if (!s?.owner_email) {
+    return res.status(400).json({ error: 'Set owner_email in Settings first.' });
+  }
+  const to =
+    typeof req.body?.to === 'string' && req.body.to.trim()
+      ? String(req.body.to).trim()
+      : s.owner_email;
+  if (!/^\S+@\S+\.\S+$/.test(to)) {
+    return res.status(400).json({ error: 'Invalid recipient email' });
+  }
+  const result = await sendMail({
+    to,
+    subject: 'KungFu test email',
+    text:
+      `Hi ${s.owner_name || 'there'},\n\n` +
+      `This is a test email from your KungFu club app.\n` +
+      `If you received this, your SMTP settings are working.\n\n` +
+      `Sent at ${new Date().toISOString()}.`,
+  });
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error });
+  }
+  res.json({ ok: true, to, messageId: result.messageId });
 });
 
 if (isProd) {

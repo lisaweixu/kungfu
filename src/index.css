@@ -497,3 +497,30 @@ button.owner-class-remove {
     grid-template-columns: 1fr;
   }
 }
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  align-self: end;
+  padding-bottom: 0.5rem;
+}
+
+.checkbox-label input[type='checkbox'] {
+  width: auto;
+  margin: 0;
+}
+
+.ledger tr.expiring-soon td {
+  background: #fff4e0;
+}
+
+.ledger tr.expiring-soon td:first-child {
+  border-left: 3px solid #d97706;
+}
+
+.settings-saved {
+  align-self: center;
+  color: #059669;
+  font-size: 0.95em;
+}

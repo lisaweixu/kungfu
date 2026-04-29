@@ -53,6 +53,7 @@ export default function App() {
   const [classTypeBusy, setClassTypeBusy] = useState(false);
   const [removeClassId, setRemoveClassId] = useState(null);
   const [showSummary, setShowSummary] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   const reloadClassTypes = useCallback(async () => {
     try {
@@ -156,6 +157,15 @@ export default function App() {
     );
   }
 
+  if (showSettings) {
+    return (
+      <SettingsView
+        onBack={() => setShowSettings(false)}
+        setErr={setErr}
+      />
+    );
+  }
+
   return (
     <>
       <h1>KungFu</h1>
@@ -215,6 +225,18 @@ export default function App() {
           }}
         >
           {showManageClassTypes ? 'Close' : 'Manage class types'}
+        </button>
+        <button
+          type="button"
+          className="secondary settings-button"
+          onClick={() => {
+            setErr(null);
+            setShowSettings(true);
+          }}
+          aria-label="Settings"
+          title="Settings"
+        >
+          ⚙ Settings
         </button>
       </div>
       {showManageClassTypes ? (
@@ -552,8 +574,14 @@ function NewMemberForm({ onCancel, onCreated, setErr }) {
   );
 }
 
+function defaultExpiryIso(months = 12) {
+  const d = new Date();
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().slice(0, 10);
+}
+
 function MemberDetail({ detail, classTypes, onBack, onRefresh, setErr }) {
-  const { member, balance, balancesByClass, ledger } = detail;
+  const { member, balance, balancesByClass, ledger, batches } = detail;
   const firstClassId = classTypes[0]?.id ?? 1;
   const [purchaseClassId, setPurchaseClassId] = useState(firstClassId);
   const [attendClassId, setAttendClassId] = useState(firstClassId);
@@ -561,6 +589,8 @@ function MemberDetail({ detail, classTypes, onBack, onRefresh, setErr }) {
   const [takeCount, setTakeCount] = useState(1);
   const [notePurchase, setNotePurchase] = useState('');
   const [noteAttend, setNoteAttend] = useState('');
+  const [purchaseExpiry, setPurchaseExpiry] = useState(defaultExpiryIso(12));
+  const [purchaseNoExpiry, setPurchaseNoExpiry] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -579,6 +609,17 @@ function MemberDetail({ detail, classTypes, onBack, onRefresh, setErr }) {
 
   const doPurchase = async () => {
     setErr(null);
+    if (!purchaseNoExpiry) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(purchaseExpiry)) {
+        setErr('Pick an expiry date or check "Never expires".');
+        return;
+      }
+      const today = new Date().toISOString().slice(0, 10);
+      if (purchaseExpiry < today) {
+        setErr('Expiry date must be today or later.');
+        return;
+      }
+    }
     setBusy(true);
     try {
       await api(`/api/members/${member.id}/purchase`, {
@@ -587,6 +628,8 @@ function MemberDetail({ detail, classTypes, onBack, onRefresh, setErr }) {
           classId: purchaseClassId,
           classes: classesToAdd,
           note: notePurchase,
+          expiresAt: purchaseNoExpiry ? null : purchaseExpiry,
+          noExpiry: purchaseNoExpiry,
         }),
       });
       setNotePurchase('');
@@ -693,6 +736,25 @@ function MemberDetail({ detail, classTypes, onBack, onRefresh, setErr }) {
             />
           </label>
         </div>
+        <div className="row2">
+          <label>
+            Expires on
+            <input
+              type="date"
+              value={purchaseExpiry}
+              disabled={purchaseNoExpiry}
+              onChange={(e) => setPurchaseExpiry(e.target.value)}
+            />
+          </label>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={purchaseNoExpiry}
+              onChange={(e) => setPurchaseNoExpiry(e.target.checked)}
+            />
+            Never expires
+          </label>
+        </div>
         <label>
           Note (optional)
           <input
@@ -707,6 +769,47 @@ function MemberDetail({ detail, classTypes, onBack, onRefresh, setErr }) {
           </button>
         </p>
       </div>
+
+      {batches?.length ? (
+        <div className="card">
+          <h2>Active credit batches</h2>
+          <div className="ledger-wrap">
+            <table className="ledger">
+              <thead>
+                <tr>
+                  <th>Class</th>
+                  <th className="num">Remaining</th>
+                  <th className="num">Used / Total</th>
+                  <th>Expires</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {batches.map((b) => {
+                  const today = new Date().toISOString().slice(0, 10);
+                  const daysLeft = b.expiresAt
+                    ? Math.ceil((new Date(b.expiresAt) - new Date(today)) / 86400000)
+                    : null;
+                  const cls = daysLeft != null && daysLeft <= 14 ? 'expiring-soon' : '';
+                  return (
+                    <tr key={b.id} className={cls}>
+                      <td className="ledger-class">{b.className}</td>
+                      <td className="num"><strong>{b.remaining}</strong></td>
+                      <td className="num">{b.used} / {b.quantity}</td>
+                      <td>
+                        {b.expiresAt
+                          ? `${b.expiresAt}${daysLeft != null ? ` (${daysLeft}d)` : ''}`
+                          : '永不 / Never'}
+                      </td>
+                      <td>{b.note || '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
 
       <div className="card">
         <h2>Take class (attendance)</h2>
@@ -785,6 +888,236 @@ function MemberDetail({ detail, classTypes, onBack, onRefresh, setErr }) {
             </tbody>
           </table>
         </div>
+      </div>
+    </>
+  );
+}
+
+function SettingsView({ onBack, setErr }) {
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [data, setData] = useState(null);
+  const [savedAt, setSavedAt] = useState(null);
+  const [testTo, setTestTo] = useState('');
+  const [testStatus, setTestStatus] = useState(null);
+  const [smtpPassInput, setSmtpPassInput] = useState('');
+
+  const load = useCallback(async () => {
+    setErr(null);
+    setLoading(true);
+    try {
+      const s = await api('/api/settings');
+      setData(s);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [setErr]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const update = (patch) => setData((d) => ({ ...d, ...patch }));
+
+  const save = async () => {
+    setErr(null);
+    setSavedAt(null);
+    setBusy(true);
+    try {
+      const body = {
+        owner_name: data.owner_name,
+        owner_email: data.owner_email,
+        smtp_host: data.smtp_host,
+        smtp_port: data.smtp_port,
+        smtp_user: data.smtp_user,
+        smtp_secure: data.smtp_secure,
+        default_validity_months: Number(data.default_validity_months) || 12,
+        reminders_enabled: data.reminders_enabled,
+      };
+      if (smtpPassInput.length) body.smtp_pass = smtpPassInput;
+      const updated = await api('/api/settings', {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+      setData(updated);
+      setSmtpPassInput('');
+      setSavedAt(new Date().toLocaleTimeString());
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendTest = async () => {
+    setErr(null);
+    setTestStatus(null);
+    setBusy(true);
+    try {
+      const body = testTo.trim() ? { to: testTo.trim() } : {};
+      const r = await api('/api/settings/test-email', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      setTestStatus(`Sent to ${r.to} ✓`);
+    } catch (e) {
+      setTestStatus(`Failed: ${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loading || !data) {
+    return (
+      <>
+        <h1>Settings</h1>
+        <p className="sub">Loading…</p>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <h1>Settings</h1>
+      <p className="sub">
+        Owner contact, default credit validity, SMTP for sending reminders, and test email.
+      </p>
+      <div className="toolbar">
+        <button type="button" className="secondary" onClick={onBack}>
+          Back
+        </button>
+        <button type="button" onClick={save} disabled={busy}>
+          Save
+        </button>
+        {savedAt ? <span className="settings-saved">Saved at {savedAt}</span> : null}
+      </div>
+
+      <div className="card">
+        <h2>Owner</h2>
+        <label>
+          Owner name
+          <input
+            value={data.owner_name ?? ''}
+            onChange={(e) => update({ owner_name: e.target.value })}
+            placeholder="e.g. Lisa"
+          />
+        </label>
+        <label>
+          Owner email (used as the From address; BCC on reminders)
+          <input
+            type="email"
+            value={data.owner_email ?? ''}
+            onChange={(e) => update({ owner_email: e.target.value })}
+            placeholder="owner@example.com"
+          />
+        </label>
+      </div>
+
+      <div className="card">
+        <h2>Credits</h2>
+        <label>
+          Default validity (months) for new purchases
+          <input
+            type="number"
+            min={1}
+            max={120}
+            value={data.default_validity_months ?? 12}
+            onChange={(e) => update({ default_validity_months: Number(e.target.value) })}
+          />
+        </label>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={Boolean(data.reminders_enabled)}
+            onChange={(e) => update({ reminders_enabled: e.target.checked })}
+          />
+          Send automatic reminders (low balance + expiring credits)
+        </label>
+      </div>
+
+      <div className="card">
+        <h2>SMTP (for sending email)</h2>
+        <p className="sub">
+          For Gmail use <code>smtp.gmail.com</code> port <code>465</code> (SSL) with an{' '}
+          <strong>App Password</strong>, not your regular password.
+        </p>
+        <div className="row2">
+          <label>
+            SMTP host
+            <input
+              value={data.smtp_host ?? ''}
+              onChange={(e) => update({ smtp_host: e.target.value })}
+              placeholder="smtp.gmail.com"
+            />
+          </label>
+          <label>
+            SMTP port
+            <input
+              type="number"
+              min={1}
+              max={65535}
+              value={data.smtp_port ?? ''}
+              onChange={(e) => update({ smtp_port: e.target.value === '' ? null : Number(e.target.value) })}
+              placeholder="465"
+            />
+          </label>
+        </div>
+        <div className="row2">
+          <label>
+            SMTP user
+            <input
+              value={data.smtp_user ?? ''}
+              onChange={(e) => update({ smtp_user: e.target.value })}
+              placeholder="owner@gmail.com"
+              autoComplete="username"
+            />
+          </label>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={Boolean(data.smtp_secure)}
+              onChange={(e) => update({ smtp_secure: e.target.checked })}
+            />
+            Use SSL/TLS (port 465)
+          </label>
+        </div>
+        <label>
+          SMTP password (App Password) {data.smtp_pass_set ? <em>— stored, leave blank to keep</em> : null}
+          <input
+            type="password"
+            value={smtpPassInput}
+            onChange={(e) => setSmtpPassInput(e.target.value)}
+            placeholder={data.smtp_pass_set ? '•••••••• (leave blank to keep)' : 'Paste App Password here'}
+            autoComplete="new-password"
+          />
+        </label>
+      </div>
+
+      <div className="card">
+        <h2>Send test email</h2>
+        <p className="sub">
+          Verifies SMTP works. Defaults to the owner email above.
+        </p>
+        <label>
+          Send to (optional override)
+          <input
+            type="email"
+            value={testTo}
+            onChange={(e) => setTestTo(e.target.value)}
+            placeholder={data.owner_email || 'owner@example.com'}
+          />
+        </label>
+        <p>
+          <button type="button" onClick={sendTest} disabled={busy || !data.smtp_pass_set || !data.owner_email}>
+            Send test email
+          </button>
+        </p>
+        {testStatus ? <p className="sub">{testStatus}</p> : null}
+        {!data.smtp_pass_set ? (
+          <p className="sub">Save SMTP password first.</p>
+        ) : null}
       </div>
     </>
   );
