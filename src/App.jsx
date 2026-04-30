@@ -1284,15 +1284,20 @@ function SettingsView({ onBack, setErr, classTypes, reloadClassTypes }) {
             placeholder="e.g. Lisa"
           />
         </label>
-        <label>
-          Owner email (used as the From address; BCC on reminders)
-          <input
-            type="email"
-            value={data.owner_email ?? ''}
-            onChange={(e) => update({ owner_email: e.target.value })}
-            placeholder="owner@example.com"
-          />
-        </label>
+        <div className="settings-owner-email-section">
+          <label>
+            Owner email
+            <input
+              type="email"
+              value={data.owner_email ?? ''}
+              onChange={(e) => update({ owner_email: e.target.value })}
+              placeholder="owner@example.com"
+            />
+          </label>
+          <p className="settings-field-hint">
+            Used as the From address; BCC on reminders.
+          </p>
+        </div>
       </div>
 
       <div className="card">

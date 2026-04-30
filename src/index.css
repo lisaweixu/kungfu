@@ -656,6 +656,17 @@ button.owner-class-remove {
   font-size: 0.95em;
 }
 
+.settings-owner-email-section {
+  margin-top: 1rem;
+}
+
+.settings-field-hint {
+  margin: 0.2rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: #71717a;
+}
+
 .summary-class-email-btn {
   display: inline-block;
   margin-top: 0.25rem;
