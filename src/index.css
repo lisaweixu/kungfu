@@ -213,6 +213,23 @@ form label {
   flex: 1;
 }
 
+.class-type-summary-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.25rem 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.class-type-summary-list li {
+  background: #eef2ed;
+  color: #2d5a3d;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.9em;
+}
+
 button.owner-class-remove {
   flex-shrink: 0;
   padding: 0.3rem 0.55rem;
@@ -519,6 +536,120 @@ button.owner-class-remove {
   border-left: 3px solid #d97706;
 }
 
+.credits-by-class {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.credits-empty {
+  margin: 0.25rem 0 0;
+  color: #71717a;
+}
+
+.credits-class-block {
+  border-left: 3px solid #2d5a3d;
+  padding: 0.4rem 0 0.4rem 0.75rem;
+}
+
+.credits-class-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 0.15rem 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.credits-class-head:hover:not(:disabled) {
+  background: #f4f4f5;
+}
+
+.credits-class-head:focus-visible {
+  outline: 2px solid #2d5a3d;
+  outline-offset: 2px;
+}
+
+.credits-class-head:disabled {
+  cursor: default;
+}
+
+.credits-class-toggle {
+  display: inline-block;
+  width: 1rem;
+  color: #2d5a3d;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.credits-class-name {
+  flex: 1;
+}
+
+.credits-class-name {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.credits-class-total {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #2d5a3d;
+  font-variant-numeric: tabular-nums;
+}
+
+.credits-batches {
+  list-style: none;
+  padding: 0;
+  margin: 0.4rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.credits-batches li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.75rem;
+  font-size: 0.9rem;
+  color: #555;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+}
+
+.credits-batches li.expiring-soon {
+  background: #fff4e0;
+  border-left: 3px solid #d97706;
+  padding-left: 0.5rem;
+  color: #1a1a1a;
+}
+
+.batch-remaining strong {
+  color: #1a1a1a;
+}
+
+.batch-usage {
+  color: #71717a;
+}
+
+.batch-expiry {
+  color: #555;
+}
+
+.batch-note {
+  color: #71717a;
+  font-style: italic;
+}
+
 .settings-saved {
   align-self: center;
   color: #059669;
@@ -530,16 +661,19 @@ button.owner-class-remove {
   margin-top: 0.25rem;
   padding: 0.15rem 0.4rem;
   font-size: 0.75rem;
-  border: 1px solid #d4d4d8;
+  border: 1px solid #2d5a3d;
   border-radius: 4px;
   background: #fafafa;
+  color: #2d5a3d;
+  font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
 }
 
 .summary-class-email-btn:hover {
-  background: #f4f4f5;
-  border-color: #a1a1aa;
+  background: #2d5a3d;
+  color: #fff;
+  border-color: #2d5a3d;
 }
 
 .modal-backdrop {
@@ -592,10 +726,26 @@ button.owner-class-remove {
   margin-top: 0.75rem;
 }
 
+.modal-panel label {
+  display: block;
+  margin-bottom: 0.65rem;
+  font-family:
+    system-ui, -apple-system, 'Segoe UI', Roboto, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  color: #2d5a3d;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.modal-panel input[type='text'],
+.modal-panel input[type='email'],
 .modal-panel textarea {
   width: 100%;
-  font-family: inherit;
+  font-family:
+    Georgia, 'Songti SC', 'STSong', 'SimSun', 'Noto Serif SC', serif;
   font-size: 1em;
+  font-weight: 400;
+  color: #1a1a1a;
   padding: 0.5rem;
   border: 1px solid #d4d4d8;
   border-radius: 4px;
@@ -670,4 +820,43 @@ button.owner-class-remove {
   font-family: inherit;
   font-size: 0.9em;
   margin: 0.25rem 0 0;
+}
+
+.member-info-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.member-info-head h2 {
+  margin: 0;
+}
+
+.member-info-edit-btn {
+  font-size: 0.85rem;
+  padding: 0.25rem 0.6rem;
+}
+
+.info-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.info-list li {
+  display: grid;
+  grid-template-columns: 5rem 1fr;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.info-list li:last-child {
+  border-bottom: none;
+}
+
+.info-label {
+  color: #71717a;
+  font-size: 0.9em;
 }

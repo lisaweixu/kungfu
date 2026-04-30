@@ -1,0 +1,10 @@
+echo "Running tests before commit..."
+npm test --silent
+status=$?
+if [ $status -ne 0 ]; then
+  echo ""
+  echo "Tests failed. Commit aborted."
+  echo "Fix the failures, or use 'git commit --no-verify' to bypass (not recommended)."
+  exit $status
+fi
+echo "All tests passed. Proceeding with commit."

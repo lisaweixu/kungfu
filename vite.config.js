@@ -14,4 +14,11 @@ export default defineConfig({
       '/api': 'http://127.0.0.1:3000',
     },
   },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.js'],
+    css: false,
+    include: ['src/**/*.{test,spec}.{js,jsx}'],
+  },
 });

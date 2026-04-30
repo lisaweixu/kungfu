@@ -11,7 +11,7 @@ if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-const dbPath = path.join(dataDir, 'kungfu.db');
+const dbPath = process.env.KUNGFU_DB_PATH || path.join(dataDir, 'kungfu.db');
 const db = new DatabaseSync(dbPath, { enableForeignKeyConstraints: true });
 
 db.exec('PRAGMA journal_mode = WAL;');
@@ -339,6 +339,10 @@ function recordPurchase(memberId, classId, quantity, expiresAt, note) {
          (member_id, class_id, quantity, used, expires_at, note, source_ledger_id)
        VALUES (?, ?, ?, 0, ?, ?, ?)`
     ).run(memberId, classId, quantity, expiresAt || null, note || null, ledgerId);
+    db.prepare(
+      `DELETE FROM reminders_sent
+       WHERE member_id = ? AND class_id = ? AND trigger_kind = 'low_balance'`
+    ).run(memberId, classId);
     commit.run();
     return { ledgerId };
   } catch (err) {
@@ -466,6 +470,138 @@ function getClubSummary() {
  * in the given class AND a non-empty email AND are active.
  * Used as the recipient list for "Email this class" (cancellation messages).
  */
+/**
+ * Returns members whose remaining credits in some class are at one of the configured
+ * low-balance thresholds (2, 1, 0) and who have NOT yet been reminded for that
+ * (class, threshold) since their last purchase.
+ *
+ * Only returns rows for members who:
+ *   - are active, have an email, AND have ever held a credit batch in that class
+ *     (so brand-new members aren't spammed with "0 credits in Wing Chun")
+ *
+ * @returns {Array<{
+ *   memberId: number, memberName: string, memberEmail: string,
+ *   classId: number, className: string, balance: number
+ * }>}
+ */
+function findLowBalanceTriggers() {
+  return db
+    .prepare(
+      `SELECT
+         m.id   AS memberId,
+         m.name AS memberName,
+         m.email AS memberEmail,
+         c.id   AS classId,
+         c.name AS className,
+         COALESCE(SUM(CASE
+           WHEN b.expires_at IS NULL OR b.expires_at >= date('now', 'localtime')
+           THEN b.quantity - b.used
+           ELSE 0
+         END), 0) AS balance
+       FROM members m
+       CROSS JOIN class_types c
+       LEFT JOIN credit_batches b ON b.member_id = m.id AND b.class_id = c.id
+       WHERE m.active = 1
+         AND m.email IS NOT NULL
+         AND TRIM(m.email) <> ''
+         AND EXISTS (
+           SELECT 1 FROM credit_batches bb
+           WHERE bb.member_id = m.id AND bb.class_id = c.id
+         )
+       GROUP BY m.id, c.id
+       HAVING balance IN (0, 1, 2)
+          AND NOT EXISTS (
+            SELECT 1 FROM reminders_sent rs
+            WHERE rs.member_id = m.id
+              AND rs.class_id = c.id
+              AND rs.trigger_kind = 'low_balance'
+              AND rs.trigger_key = CAST(balance AS TEXT)
+          )
+       ORDER BY m.name COLLATE NOCASE, c.name COLLATE NOCASE`
+    )
+    .all();
+}
+
+/**
+ * Returns one row per credit batch that needs an expiry reminder right now.
+ *
+ * Logic:
+ *   For each batch belonging to an active member with an email, that still has
+ *   credits remaining and an expiry date with daysUntil between 0 and 14 inclusive,
+ *   we consider two milestones: '14d' (window is 0..14 days) and '3d' (window is 0..3 days).
+ *
+ *   For each batch, we compute which milestones are CURRENTLY active and have NOT
+ *   yet been recorded in reminders_sent. Those go in `thresholdsToMark`.
+ *
+ *   If multiple milestones are unsent (e.g. the server was offline and caught up at
+ *   daysUntil=2, so both 14d and 3d are due), we still emit ONE row — the runner
+ *   sends a single email and marks ALL applicable thresholds as sent. This caps each
+ *   batch at at most 2 emails over its lifetime (one per milestone).
+ *
+ * @returns {Array<{
+ *   memberId: number, memberName: string, memberEmail: string,
+ *   classId: number, className: string,
+ *   batchId: number, expiresAt: string, remaining: number, daysUntil: number,
+ *   thresholdsToMark: number[]
+ * }>}
+ */
+function findExpiryTriggers() {
+  const raw = db
+    .prepare(
+      `SELECT
+         m.id     AS memberId,
+         m.name   AS memberName,
+         m.email  AS memberEmail,
+         c.id     AS classId,
+         c.name   AS className,
+         b.id     AS batchId,
+         b.expires_at AS expiresAt,
+         (b.quantity - b.used) AS remaining,
+         CAST(julianday(b.expires_at) - julianday(date('now', 'localtime')) AS INTEGER)
+           AS daysUntil
+       FROM credit_batches b
+       JOIN members m ON m.id = b.member_id
+       JOIN class_types c ON c.id = b.class_id
+       WHERE m.active = 1
+         AND m.email IS NOT NULL
+         AND TRIM(m.email) <> ''
+         AND b.expires_at IS NOT NULL
+         AND b.quantity > b.used
+         AND CAST(julianday(b.expires_at) - julianday(date('now', 'localtime')) AS INTEGER) >= 0
+         AND CAST(julianday(b.expires_at) - julianday(date('now', 'localtime')) AS INTEGER) <= 14
+       ORDER BY m.name COLLATE NOCASE, c.name COLLATE NOCASE, b.expires_at ASC`
+    )
+    .all();
+
+  const sentStmt = db.prepare(
+    `SELECT 1 FROM reminders_sent
+     WHERE member_id = ? AND class_id = ?
+       AND trigger_kind = 'expiry' AND trigger_key = ?`
+  );
+
+  const triggers = [];
+  for (const row of raw) {
+    const candidates = [];
+    if (row.daysUntil <= 14) candidates.push(14);
+    if (row.daysUntil <= 3) candidates.push(3);
+    const unsent = candidates.filter(
+      (t) => !sentStmt.get(row.memberId, row.classId, `${row.batchId}:${t}d`)
+    );
+    if (unsent.length === 0) continue;
+    triggers.push({ ...row, thresholdsToMark: unsent });
+  }
+  return triggers;
+}
+
+/** Records that a reminder of (kind, key) was sent to (member, class). Idempotent. */
+function recordReminderSent(memberId, classId, kind, key) {
+  db.prepare(
+    `INSERT OR IGNORE INTO reminders_sent
+       (member_id, class_id, trigger_kind, trigger_key)
+     VALUES (?, ?, ?, ?)`
+  ).run(memberId, classId, kind, String(key));
+}
+
 function getEmailRecipientsForClass(classId) {
   return db
     .prepare(
@@ -611,4 +747,7 @@ export {
   countActiveCreditMembersForClass,
   recordClassMessage,
   listClassMessages,
+  findLowBalanceTriggers,
+  findExpiryTriggers,
+  recordReminderSent,
 };

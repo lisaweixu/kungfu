@@ -93,6 +93,27 @@ Option B - Start fresh (blank club):
 - Mark attendance for that class
 - Open Summary page; confirm values update
 
+10a) Configure Settings (one-time, in the UI)
+- Click the "⚙ Settings" button
+- Owner name + Owner email (used as From + BCC on every reminder)
+- SMTP host/port/user/pass:
+   - For Gmail: smtp.gmail.com / 465 / your address / a Gmail App Password
+     (https://myaccount.google.com/apppasswords - requires 2-Step Verification)
+- Default validity: 12 months (changeable per purchase)
+- Reminders: turn ON to enable automatic reminder emails
+- Click Save
+- Click "Send test email" - should report success
+- (Optional) Click "Run reminders now" in the Reminders card to do a one-off pass
+
+10b) About automatic reminders (Phase 4)
+- The server runs a reminders pass once per day at 09:00 local time.
+- Low-balance: emails the member once when their per-class balance hits 2, 1, or 0
+  (resets after a top-up, so the next drop re-triggers).
+- Expiry: emails the member once when a credit batch has 14 days or 3 days left.
+- The owner is BCC'd on every reminder.
+- Requires: Reminders enabled + SMTP configured + Owner email set.
+- Manual trigger anytime via Settings - "Run reminders now".
+
 11) One-off manual backup (do this now, at least once)
 - Run:
   npm run backup-db -- "D:\Backups\KungFu"

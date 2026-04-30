@@ -23,6 +23,7 @@ import {
 } from './db.js';
 import { log, requestLogger, errorLogger } from './logger.js';
 import { sendMail, resetTransport } from './mailer.js';
+import { runReminders } from './reminders.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
@@ -409,6 +410,16 @@ app.post('/api/settings/test-email', async (req, res) => {
   res.json({ ok: true, to, messageId: result.messageId });
 });
 
+app.post('/api/reminders/run', async (_req, res) => {
+  try {
+    const r = await runReminders();
+    res.json(r);
+  } catch (e) {
+    log.error('Manual reminders run failed:', e);
+    res.status(500).json({ error: e.message || 'Reminders run failed' });
+  }
+});
+
 if (isProd) {
   const dist = path.join(root, 'dist');
   app.use(express.static(dist));
@@ -420,6 +431,36 @@ if (isProd) {
 
 app.use(errorLogger);
 
+const REMINDERS_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const REMINDERS_HOUR_LOCAL = 9;
+
+function msUntilNext(hourLocal) {
+  const now = new Date();
+  const next = new Date(now);
+  next.setHours(hourLocal, 0, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  return next.getTime() - now.getTime();
+}
+
+function scheduleReminders() {
+  const tick = async () => {
+    try {
+      await runReminders();
+    } catch (e) {
+      log.error('Scheduled reminders failed:', e);
+    }
+  };
+  const initialDelay = msUntilNext(REMINDERS_HOUR_LOCAL);
+  log.info(
+    `Reminders scheduled: first run in ${Math.round(initialDelay / 60000)} min ` +
+      `(${REMINDERS_HOUR_LOCAL}:00 local), then every 24h.`
+  );
+  setTimeout(() => {
+    tick();
+    setInterval(tick, REMINDERS_INTERVAL_MS);
+  }, initialDelay);
+}
+
 app.listen(PORT, '0.0.0.0', () => {
   log.info(
     isProd
@@ -427,4 +468,5 @@ app.listen(PORT, '0.0.0.0', () => {
       : `KungFu API listening on http://127.0.0.1:${PORT}`
   );
   log.info(`Logging to ${log.file}`);
+  scheduleReminders();
 });

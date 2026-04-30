@@ -60,10 +60,6 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(null);
   const [detail, setDetail] = useState(null);
   const [showNew, setShowNew] = useState(false);
-  const [showManageClassTypes, setShowManageClassTypes] = useState(false);
-  const [newClassName, setNewClassName] = useState('');
-  const [classTypeBusy, setClassTypeBusy] = useState(false);
-  const [removeClassId, setRemoveClassId] = useState(null);
   const [showSummary, setShowSummary] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
@@ -174,6 +170,8 @@ export default function App() {
       <SettingsView
         onBack={() => setShowSettings(false)}
         setErr={setErr}
+        classTypes={classTypes}
+        reloadClassTypes={reloadClassTypes}
       />
     );
   }
@@ -221,22 +219,11 @@ export default function App() {
           type="button"
           className="secondary"
           onClick={() => {
-            setShowManageClassTypes(false);
             setErr(null);
             setShowSummary(true);
           }}
         >
           Summary
-        </button>
-        <button
-          type="button"
-          className="secondary"
-          onClick={() => {
-            setShowManageClassTypes((v) => !v);
-            setErr(null);
-          }}
-        >
-          {showManageClassTypes ? 'Close' : 'Manage class types'}
         </button>
         <button
           type="button"
@@ -251,104 +238,6 @@ export default function App() {
           ⚙ Settings
         </button>
       </div>
-      {showManageClassTypes ? (
-        <div className="card owner-class-form">
-          <h2 className="owner-class-form-title">Class types</h2>
-          <p className="owner-class-form-hint">
-            Remove is only allowed if no member has credits or attendance for that class, and at least one
-            type must remain.
-          </p>
-          <ul className="class-type-manage-list" aria-label="Class types">
-            {classTypes.map((c) => (
-              <li key={c.id}>
-                <span className="class-type-manage-name">{c.name}</span>
-                <button
-                  type="button"
-                  className="danger owner-class-remove"
-                  disabled={
-                    classTypeBusy || removeClassId !== null || classTypes.length <= 1
-                  }
-                  onClick={async () => {
-                    if (
-                      !window.confirm(
-                        `Remove class type “${c.name}”? This cannot be undone.`,
-                      )
-                    ) {
-                      return;
-                    }
-                    setErr(null);
-                    setRemoveClassId(c.id);
-                    try {
-                      await api(`/api/class-types/${c.id}`, { method: 'DELETE' });
-                      await reloadClassTypes();
-                    } catch (err) {
-                      setErr(err.message);
-                    } finally {
-                      setRemoveClassId(null);
-                    }
-                  }}
-                >
-                  Remove
-                </button>
-              </li>
-            ))}
-          </ul>
-          <h3 className="owner-class-form-subtitle">Add new</h3>
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault();
-              setErr(null);
-              const name = newClassName.trim();
-              if (!name) {
-                setErr('Class name is required.');
-                return;
-              }
-              setClassTypeBusy(true);
-              try {
-                await api('/api/class-types', {
-                  method: 'POST',
-                  body: JSON.stringify({ name }),
-                });
-                setNewClassName('');
-                await reloadClassTypes();
-              } catch (err) {
-                setErr(err.message);
-              } finally {
-                setClassTypeBusy(false);
-              }
-            }}
-          >
-            <label>
-              Name *
-              <input
-                lang="zh-CN"
-                value={newClassName}
-                onChange={(e) => setNewClassName(e.target.value)}
-                placeholder="e.g. 散打 Sanda"
-                maxLength={120}
-                autoComplete="off"
-              />
-            </label>
-            <p className="owner-class-form-actions">
-              <button type="submit" disabled={classTypeBusy || removeClassId !== null}>
-                Save class type
-              </button>
-              <button
-                type="button"
-                className="secondary"
-                disabled={classTypeBusy || removeClassId !== null}
-                onClick={() => {
-                  setShowManageClassTypes(false);
-                  setNewClassName('');
-                  setErr(null);
-                }}
-              >
-                Done
-              </button>
-            </p>
-          </form>
-        </div>
-      ) : null}
       {loading ? (
         <p>Loading…</p>
       ) : (
@@ -640,6 +529,7 @@ function ClassEmailModal({ classType, onClose, onSent, setErr }) {
             <label>
               Subject
               <input
+                type="text"
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
                 maxLength={200}
@@ -784,6 +674,68 @@ function MemberDetail({ detail, classTypes, onBack, onRefresh, setErr }) {
   const [noteAttend, setNoteAttend] = useState('');
   const [purchaseValidity, setPurchaseValidity] = useState('12m');
   const [busy, setBusy] = useState(false);
+  const [showAddCredits, setShowAddCredits] = useState(false);
+  const [collapsedClassIds, setCollapsedClassIds] = useState(() => new Set());
+  const toggleClassCollapsed = (classId) => {
+    setCollapsedClassIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(classId)) next.delete(classId);
+      else next.add(classId);
+      return next;
+    });
+  };
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState(member.name ?? '');
+  const [editAge, setEditAge] = useState(member.age ?? '');
+  const [editPhone, setEditPhone] = useState(member.phone ?? '');
+  const [editEmail, setEditEmail] = useState(member.email ?? '');
+  const [editNotes, setEditNotes] = useState(member.notes ?? '');
+
+  const startEdit = () => {
+    setErr(null);
+    setEditName(member.name ?? '');
+    setEditAge(member.age ?? '');
+    setEditPhone(member.phone ?? '');
+    setEditEmail(member.email ?? '');
+    setEditNotes(member.notes ?? '');
+    setEditing(true);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setErr(null);
+  };
+
+  const saveEdit = async () => {
+    setErr(null);
+    if (!editName.trim()) {
+      setErr('Name is required.');
+      return;
+    }
+    if (editEmail.trim() && !/^\S+@\S+\.\S+$/.test(editEmail.trim())) {
+      setErr('Email is not valid.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await api(`/api/members/${member.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: editName.trim(),
+          age: editAge === '' ? null : Number(editAge),
+          phone: editPhone.trim() || null,
+          email: editEmail.trim() || null,
+          notes: editNotes.trim() || null,
+        }),
+      });
+      setEditing(false);
+      await onRefresh();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (!classTypes.length) return;
@@ -817,12 +769,23 @@ function MemberDetail({ detail, classTypes, onBack, onRefresh, setErr }) {
         }),
       });
       setNotePurchase('');
+      setShowAddCredits(false);
       await onRefresh();
     } catch (e) {
       setErr(e.message);
     } finally {
       setBusy(false);
     }
+  };
+
+  const openAddCredits = () => {
+    setErr(null);
+    setShowAddCredits(true);
+  };
+
+  const closeAddCredits = () => {
+    if (busy) return;
+    setShowAddCredits(false);
   };
 
   const doAttend = async () => {
@@ -873,121 +836,181 @@ function MemberDetail({ detail, classTypes, onBack, onRefresh, setErr }) {
         <button type="button" className="secondary" onClick={onBack}>
           Back
         </button>
-        <button type="button" className="secondary" onClick={toggleActive} disabled={busy}>
+        <button type="button" className="secondary" onClick={toggleActive} disabled={busy || editing}>
           {member.active ? 'Mark inactive' : 'Mark active'}
         </button>
       </div>
 
-      {balancesByClass?.length ? (
+      {editing ? (
         <div className="card">
-          <h2>Credits by class</h2>
-          <ul className="class-balances">
-            {balancesByClass.map((b) => (
-              <li key={b.classId}>
-                <span className="class-balances-name">{b.name}</span>
-                <span className="class-balances-num">{b.balance}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      <div className="card">
-        <h2>Add prepaid credits</h2>
-        <div className="row2">
+          <h2>Edit member</h2>
           <label>
-            Class type
-            <select
-              lang="zh-CN"
-              value={purchaseClassId}
-              onChange={(e) => setPurchaseClassId(Number(e.target.value))}
-            >
-              {classTypes.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Credits
+            Name *
             <input
-              type="number"
-              min={1}
-              max={999}
-              value={classesToAdd}
-              onChange={(e) => setClassesToAdd(Number(e.target.value))}
+              lang="zh-CN"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              required
             />
           </label>
-        </div>
-        <label>
-          Valid for
-          <select
-            value={purchaseValidity}
-            onChange={(e) => setPurchaseValidity(e.target.value)}
-          >
-            {VALIDITY_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Note (optional)
-          <input
-            lang="zh-CN"
-            value={notePurchase}
-            onChange={(e) => setNotePurchase(e.target.value)}
-          />
-        </label>
-        <p>
-          <button type="button" onClick={doPurchase} disabled={busy || !classTypes.length}>
-            Add credits
-          </button>
-        </p>
-      </div>
-
-      {batches?.length ? (
-        <div className="card">
-          <h2>Active credit batches</h2>
-          <div className="ledger-wrap">
-            <table className="ledger">
-              <thead>
-                <tr>
-                  <th>Class</th>
-                  <th className="num">Remaining</th>
-                  <th className="num">Used / Total</th>
-                  <th>Expires</th>
-                  <th>Note</th>
-                </tr>
-              </thead>
-              <tbody>
-                {batches.map((b) => {
-                  const today = localDateIso();
-                  const daysLeft = b.expiresAt
-                    ? Math.ceil((new Date(b.expiresAt) - new Date(today)) / 86400000)
-                    : null;
-                  const cls = daysLeft != null && daysLeft <= 14 ? 'expiring-soon' : '';
-                  return (
-                    <tr key={b.id} className={cls}>
-                      <td className="ledger-class">{b.className}</td>
-                      <td className="num"><strong>{b.remaining}</strong></td>
-                      <td className="num">{b.used} / {b.quantity}</td>
-                      <td>
-                        {b.expiresAt
-                          ? `${b.expiresAt}${daysLeft != null ? ` (${daysLeft}d)` : ''}`
-                          : '永不 / Never'}
-                      </td>
-                      <td>{b.note || '—'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="row2">
+            <label>
+              Age
+              <input
+                type="number"
+                min={1}
+                max={120}
+                value={editAge}
+                onChange={(e) => setEditAge(e.target.value)}
+              />
+            </label>
+            <label>
+              Phone
+              <input
+                type="tel"
+                value={editPhone}
+                onChange={(e) => setEditPhone(e.target.value)}
+              />
+            </label>
+          </div>
+          <label>
+            Email
+            <input
+              type="email"
+              value={editEmail}
+              onChange={(e) => setEditEmail(e.target.value)}
+              autoComplete="off"
+            />
+          </label>
+          <label>
+            Notes
+            <textarea
+              lang="zh-CN"
+              value={editNotes}
+              onChange={(e) => setEditNotes(e.target.value)}
+            />
+          </label>
+          <div className="modal-actions">
+            <button type="button" className="secondary" onClick={cancelEdit} disabled={busy}>
+              Cancel
+            </button>
+            <button type="button" onClick={saveEdit} disabled={busy}>
+              {busy ? 'Saving…' : 'Save'}
+            </button>
           </div>
         </div>
-      ) : null}
+      ) : (
+        <div className="card member-info">
+          <div className="member-info-head">
+            <h2>Member info</h2>
+            <button
+              type="button"
+              className="secondary member-info-edit-btn"
+              onClick={startEdit}
+              disabled={busy}
+            >
+              Edit info
+            </button>
+          </div>
+          <ul className="info-list">
+            <li>
+              <span className="info-label">Age</span>
+              <span>{member.age ?? '—'}</span>
+            </li>
+            <li>
+              <span className="info-label">Phone</span>
+              <span>{member.phone || '—'}</span>
+            </li>
+            <li>
+              <span className="info-label">Email</span>
+              <span>{member.email || '—'}</span>
+            </li>
+            {member.notes ? (
+              <li>
+                <span className="info-label">Notes</span>
+                <span>{member.notes}</span>
+              </li>
+            ) : null}
+          </ul>
+        </div>
+      )}
+
+
+      <div className="card">
+        <div className="member-info-head">
+          <h2>Credits</h2>
+          <button
+            type="button"
+            className="secondary member-info-edit-btn"
+            onClick={openAddCredits}
+            disabled={busy || !classTypes.length}
+          >
+            + Add
+          </button>
+        </div>
+        {balancesByClass?.some((b) => b.balance > 0) ? (
+          <div className="credits-by-class">
+            {balancesByClass.filter((b) => b.balance > 0).map((b) => {
+              const classBatches = (batches ?? []).filter((bt) => bt.classId === b.classId);
+              const collapsed = collapsedClassIds.has(b.classId);
+              const hasBatches = classBatches.length > 0;
+              return (
+                <div key={b.classId} className="credits-class-block">
+                  <button
+                    type="button"
+                    className="credits-class-head"
+                    onClick={() => hasBatches && toggleClassCollapsed(b.classId)}
+                    aria-expanded={hasBatches ? !collapsed : undefined}
+                    disabled={!hasBatches}
+                  >
+                    <span className="credits-class-toggle" aria-hidden="true">
+                      {hasBatches ? (collapsed ? '▸' : '▾') : ' '}
+                    </span>
+                    <span className="credits-class-name">{b.name}</span>
+                    <span className="credits-class-total">{b.balance}</span>
+                  </button>
+                  {hasBatches && !collapsed ? (
+                    <ul className="credits-batches">
+                      {classBatches.map((bt) => {
+                        const today = localDateIso();
+                        const daysLeft = bt.expiresAt
+                          ? Math.ceil((new Date(bt.expiresAt) - new Date(today)) / 86400000)
+                          : null;
+                        const cls =
+                          daysLeft != null && daysLeft <= 14 ? 'expiring-soon' : '';
+                        return (
+                          <li key={bt.id} className={cls}>
+                            <span className="batch-remaining">
+                              <strong>{bt.remaining}</strong> left
+                            </span>
+                            <span className="batch-usage">
+                              ({bt.used} / {bt.quantity})
+                            </span>
+                            <span className="batch-expiry">
+                              {bt.expiresAt
+                                ? `expires ${bt.expiresAt}${
+                                    daysLeft != null ? ` (${daysLeft}d)` : ''
+                                  }`
+                                : 'never expires'}
+                            </span>
+                            {bt.note ? (
+                              <span className="batch-note">— {bt.note}</span>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="sub credits-empty">
+            No credits yet — click <strong>+ Add</strong> to add some.
+          </p>
+        )}
+      </div>
 
       <div className="card">
         <h2>Take class (attendance)</h2>
@@ -1067,11 +1090,90 @@ function MemberDetail({ detail, classTypes, onBack, onRefresh, setErr }) {
           </table>
         </div>
       </div>
+
+      {showAddCredits ? (
+        <div className="modal-backdrop" onClick={closeAddCredits}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2>Add prepaid credits</h2>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={closeAddCredits}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="row2">
+              <label>
+                Class type
+                <select
+                  lang="zh-CN"
+                  value={purchaseClassId}
+                  onChange={(e) => setPurchaseClassId(Number(e.target.value))}
+                >
+                  {classTypes.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Credits
+                <input
+                  type="number"
+                  min={1}
+                  max={999}
+                  value={classesToAdd}
+                  onChange={(e) => setClassesToAdd(Number(e.target.value))}
+                />
+              </label>
+            </div>
+            <label>
+              Valid for
+              <select
+                value={purchaseValidity}
+                onChange={(e) => setPurchaseValidity(e.target.value)}
+              >
+                {VALIDITY_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Note (optional)
+              <input
+                type="text"
+                lang="zh-CN"
+                value={notePurchase}
+                onChange={(e) => setNotePurchase(e.target.value)}
+              />
+            </label>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="secondary"
+                onClick={closeAddCredits}
+                disabled={busy}
+              >
+                Cancel
+              </button>
+              <button type="button" onClick={doPurchase} disabled={busy || !classTypes.length}>
+                {busy ? 'Adding…' : 'Add credits'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }
 
-function SettingsView({ onBack, setErr }) {
+function SettingsView({ onBack, setErr, classTypes, reloadClassTypes }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [data, setData] = useState(null);
@@ -1298,8 +1400,205 @@ function SettingsView({ onBack, setErr }) {
         ) : null}
       </div>
 
+      <RemindersCard data={data} setErr={setErr} />
+
+      <ClassTypesManager
+        classTypes={classTypes}
+        reloadClassTypes={reloadClassTypes}
+        setErr={setErr}
+      />
+
       <ClassEmailHistory setErr={setErr} />
     </>
+  );
+}
+
+function RemindersCard({ data, setErr }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const ready =
+    data.reminders_enabled &&
+    data.smtp_pass_set &&
+    data.owner_email &&
+    data.smtp_host;
+
+  const run = async () => {
+    setErr(null);
+    setResult(null);
+    setBusy(true);
+    try {
+      const r = await api('/api/reminders/run', { method: 'POST' });
+      setResult(r);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card">
+      <h2>Reminders</h2>
+      <p className="sub">
+        The server runs a reminders pass automatically every day at 9:00 (local time).
+        Each member is emailed once when their per-class balance hits 2, 1, or 0, and
+        when a credit batch has 14 or 3 days left. The owner is BCC'd on every reminder.
+      </p>
+      <p className="sub">
+        Status: reminders are <strong>{data.reminders_enabled ? 'enabled' : 'disabled'}</strong>
+        {ready ? '' : ' — not ready (check SMTP and Owner email above)'}.
+      </p>
+      <p>
+        <button type="button" onClick={run} disabled={busy || !ready}>
+          {busy ? 'Running…' : 'Run reminders now'}
+        </button>
+      </p>
+      {result ? (
+        <div className="sub">
+          {result.reason ? (
+            <p>Skipped: {result.reason}</p>
+          ) : (
+            <>
+              <p>
+                Low-balance: <strong>{result.lowBalanceSent}</strong> sent
+                {result.lowBalanceSkipped
+                  ? `, ${result.lowBalanceSkipped} failed`
+                  : ''}
+                .
+              </p>
+              <p>
+                Expiry: <strong>{result.expirySent}</strong> sent
+                {result.expirySkipped ? `, ${result.expirySkipped} failed` : ''}.
+              </p>
+              {result.errors?.length ? (
+                <details>
+                  <summary>Errors ({result.errors.length})</summary>
+                  <ul>
+                    {result.errors.map((e, i) => (
+                      <li key={i}>{e}</li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ClassTypesManager({ classTypes, reloadClassTypes, setErr }) {
+  const [expanded, setExpanded] = useState(false);
+  const [newClassName, setNewClassName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [removeId, setRemoveId] = useState(null);
+
+  const addClassType = async (e) => {
+    e.preventDefault();
+    setErr(null);
+    const name = newClassName.trim();
+    if (!name) {
+      setErr('Class name is required.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await api('/api/class-types', {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+      });
+      setNewClassName('');
+      await reloadClassTypes();
+    } catch (err) {
+      setErr(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeClassType = async (c) => {
+    if (!window.confirm(`Remove class type “${c.name}”? This cannot be undone.`)) {
+      return;
+    }
+    setErr(null);
+    setRemoveId(c.id);
+    try {
+      await api(`/api/class-types/${c.id}`, { method: 'DELETE' });
+      await reloadClassTypes();
+    } catch (err) {
+      setErr(err.message);
+    } finally {
+      setRemoveId(null);
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="member-info-head">
+        <h2>Class types</h2>
+        <button
+          type="button"
+          className="secondary member-info-edit-btn"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? 'Done' : 'Manage'}
+        </button>
+      </div>
+      <p className="sub">
+        {classTypes.length} class type{classTypes.length === 1 ? '' : 's'} configured.
+        {expanded ? '' : ' Click Manage to add or remove.'}
+      </p>
+      {expanded ? (
+        <>
+          <p className="sub">
+            Remove is only allowed if no member has credits or attendance for that class, and at
+            least one type must remain.
+          </p>
+          <ul className="class-type-manage-list" aria-label="Class types">
+            {classTypes.map((c) => (
+              <li key={c.id}>
+                <span className="class-type-manage-name">{c.name}</span>
+                <button
+                  type="button"
+                  className="danger owner-class-remove"
+                  disabled={busy || removeId !== null || classTypes.length <= 1}
+                  onClick={() => removeClassType(c)}
+                >
+                  {removeId === c.id ? 'Removing…' : 'Remove'}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <h3 className="owner-class-form-subtitle">Add new</h3>
+          <form onSubmit={addClassType}>
+            <label>
+              Name *
+              <input
+                lang="zh-CN"
+                value={newClassName}
+                onChange={(e) => setNewClassName(e.target.value)}
+                placeholder="e.g. 散打 Sanda"
+                maxLength={120}
+                autoComplete="off"
+              />
+            </label>
+            <p className="owner-class-form-actions">
+              <button type="submit" disabled={busy || removeId !== null}>
+                {busy ? 'Saving…' : 'Save class type'}
+              </button>
+            </p>
+          </form>
+        </>
+      ) : (
+        <ul className="class-type-summary-list">
+          {classTypes.map((c) => (
+            <li key={c.id}>{c.name}</li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
