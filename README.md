@@ -1,26 +1,116 @@
 # KungFu
 
-Small **Node** web app for a martial-arts club: track **prepaid class credits** per member, **add** credits when they pay, and **subtract** when they attend. Data lives in **SQLite** on disk (`data/kungfu.db`).
+KungFu is a simple app for club staff to:
 
-Uses the built-in **`node:sqlite`** module (Node **22.5+**), so you do **not** need Visual Studio / `node-gyp` to install dependencies on Windows.
+- keep member credits by class,
+- subtract credits when students attend,
+- send class emails,
+- and send automatic reminders for low/expiring credits.
 
-## Quick start (development)
+---
 
-From this folder:
+## Daily Use (Staff)
+
+1. Open the app in your browser.
+2. Add new students with **New member**.
+3. Open a student and click **+ Add** to add prepaid credits.
+4. In **Take class (attendance)**, subtract credits when they attend.
+5. Use **Summary** to see all students and all class balances.
+6. Use **Settings** to manage email and reminders.
+
+Printable front-desk version: `STAFF-CHECKLIST.md`
+
+---
+
+## First-Time Setup (Owner/Staff)
+
+### 1) Install and run
+
+In this folder:
 
 ```powershell
 npm install
 npm run dev
 ```
 
-- **API:** http://127.0.0.1:3000  
-- **UI (Vite):** http://localhost:5173 (or your PC’s LAN IP on port **5173** — Vite is started with `--host` so phones on the same Wi‑Fi can open it)
+Then open:
 
-The dev UI proxies `/api` to the API server.
+- App: `http://localhost:5173`
+- API: `http://127.0.0.1:3000`
 
-## Production-style run (single port)
+### 2) Configure owner + email
 
-Build the UI, then start the server (serves API + static files on **one** port):
+In the app, open **Settings** and fill:
+
+- **Owner name**
+- **Owner email** (used as From address)
+- **SMTP host/port/user/password**
+
+For Gmail:
+
+- Host: `smtp.gmail.com`
+- Port: `465`
+- SSL/TLS: ON
+- Password: Gmail **App Password** (not normal Gmail password)
+
+Click **Save**, then click **Send test email**.
+
+### 3) Enable reminders (optional but recommended)
+
+In **Settings**:
+
+- turn on **Send automatic reminders**,
+- click **Save**.
+
+The server will run reminders every day at about 9:00 AM local time.
+
+---
+
+## Sending Class Emails
+
+From **Summary**:
+
+1. Click **Email** on a class column.
+2. Review recipient count.
+3. Edit subject/body.
+4. Send.
+
+The app sends with **BCC** for privacy.
+
+---
+
+## Backups (Very Important)
+
+Create a backup anytime:
+
+```powershell
+npm run backup-db -- "D:\Backups\KungFu"
+```
+
+Recommended: backup to another drive, OneDrive, or network folder.
+
+You can verify a backup file:
+
+```powershell
+npm run verify-backup -- "D:\Backups\KungFu\kungfu-backup.db"
+```
+
+### Schedule daily backup on Windows
+
+1. Edit `scripts/register-daily-backup-task.ps1`:
+   - set `$BackupDir`
+   - set `$DailyAt`
+2. Run PowerShell as Administrator:
+   ```powershell
+   .\scripts\register-daily-backup-task.ps1
+   ```
+3. Confirm task: `KungFu daily DB backup`.
+
+---
+
+## Run in Production (One Port)
+
+Use this on the main club PC:
 
 ```powershell
 npm install
@@ -29,57 +119,40 @@ $env:NODE_ENV = 'production'
 npm start
 ```
 
-Then open `http://YOUR_PC_LAN_IP:3000` on the owner’s PC or phone (same network). The server listens on **0.0.0.0** so LAN devices can reach it.
+Then open `http://YOUR_PC_IP:3000` on devices in the same network.
 
-**Backup (recommended):** use the SQLite online backup script so the copy is consistent even with WAL and while the app is running:
+---
 
-```powershell
-npm run backup-db -- "D:\Backups\KungFu"
-```
+## Quick Technical Reference
 
-That folder can be on **another drive**, **OneDrive**, a **USB stick**, or a **network path**. You can also set `KUNGFU_BACKUP_DIR` to that folder and run `npm run backup-db` with no arguments. For a fixed filename, pass a full path ending in `.db`.
+- Node requirement: `>= 22.5.0`
+- Main DB file: `data/kungfu.db`
+- Important scripts:
+  - `npm run dev`
+  - `npm run build`
+  - `npm start`
+  - `npm run backup-db`
+  - `npm run verify-backup`
+  - `npm test`
 
-**Manual:** you can still copy `data/kungfu.db` (ideally stop the server first, or copy `kungfu.db` plus `-wal`/`-shm` if present—online backup avoids that guesswork).
+### API endpoints
 
-### Windows: run backup every day
+- Health: `GET /api/health`
+- Members: `GET/POST /api/members`, `GET/PATCH /api/members/:id`
+- Credits: `POST /api/members/:id/purchase`, `POST /api/members/:id/attend`
+- Class types: `GET/POST /api/class-types`, `DELETE /api/class-types/:id`
+- Summary: `GET /api/summary`
+- Class email:
+  - `GET /api/class-types/:id/email-recipients`
+  - `POST /api/class-types/:id/email`
+  - `GET /api/class-messages`
+- Settings/email:
+  - `GET/PATCH /api/settings`
+  - `POST /api/settings/test-email`
+  - `POST /api/reminders/run`
 
-1. Edit **`scripts/register-daily-backup-task.ps1`**: set **`$BackupDir`** to a folder on **another drive**, **OneDrive**, or a **network share**, and **`$DailyAt`** (local time, 24 h).
-2. Open **PowerShell as Administrator**, `cd` to this repo, run:
-   ```powershell
-   .\scripts\register-daily-backup-task.ps1
-   ```
-3. Confirm in **Task Scheduler** (`taskschd.msc`) under **Task Scheduler Library** — task name **KungFu daily DB backup**.
+---
 
-The task runs **`scripts/backup-daily.ps1`**, which calls **`backup-db.mjs`** and appends to **`logs/backup-daily.log`**. Test once without the scheduler:
+## Security Note
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\backup-daily.ps1 -BackupDir "D:\Backups\KungFu"
-```
-
-The task uses your Windows account and **runs when you are logged in** (typical for a club PC left on). To run when logged off, recreate the task in Task Scheduler and choose **Run whether user is logged on or not** (Windows will prompt for your password).
-
-## Stack
-
-- **Express** + **`node:sqlite`** (`DatabaseSync`)
-- **React** + **Vite**
-
-## API (summary)
-
-| Method | Path | Purpose |
-|--------|------|--------|
-| `GET` | `/api/summary` | Club-wide snapshot: all members with `balanceTotal`, `phone`, and `byClass` (`balance`, `visits` per class) plus `classTypes` |
-| `GET` | `/api/class-types` | All class types (`id`, `name`, `sortOrder`), ordered |
-| `POST` | `/api/class-types` | Owner: add type `{ name }` (max 120 chars); `sortOrder` is auto (append) |
-| `DELETE` | `/api/class-types/:id` | Owner: remove type **only if** it has **no** ledger rows and **not** the last type (`204` or `400`/`404`) |
-| `GET` | `/api/members` | List members with total balance (sum over all classes) |
-| `POST` | `/api/members` | Create member `{ name, age?, phone?, email?, notes? }` |
-| `GET` | `/api/members/:id` | Member + total balance + `balancesByClass` + ledger (with class name) |
-| `PATCH` | `/api/members/:id` | Update `{ name?, age?, phone?, email?, notes?, active? }` |
-| `POST` | `/api/members/:id/purchase` | Add credits `{ classId, classes: n, note? }` |
-| `POST` | `/api/members/:id/attend` | Subtract `{ classId, count?` default 1`, note? }` |
-
-Balances are the **sum** of `ledger.delta` per member (total) and per `class_id` (each of the ten class types). Legacy rows get `class_id = 1` after upgrade.
-
-## Security note
-
-There is **no login** yet — fine for trusted LAN use. Before exposing to the internet, add authentication (and HTTPS).
+This app has no login yet. Use it only on a trusted local network unless you add authentication and HTTPS.
