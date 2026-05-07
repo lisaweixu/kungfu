@@ -260,6 +260,7 @@ function SummaryView({ onBack, onOpenMember, setErr }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [emailModalClass, setEmailModalClass] = useState(null);
+  const [emailWholeClub, setEmailWholeClub] = useState(false);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -327,7 +328,22 @@ function SummaryView({ onBack, onOpenMember, setErr }) {
         <button type="button" className="secondary" onClick={load} disabled={loading}>
           Refresh
         </button>
+        <button
+          type="button"
+          className="secondary summary-club-email-btn"
+          onClick={() => setEmailWholeClub(true)}
+          title="Email all members who have credits and an email"
+        >
+          📧 Email whole club
+        </button>
       </div>
+      {emailWholeClub ? (
+        <ClubEmailModal
+          onClose={() => setEmailWholeClub(false)}
+          onSent={() => setEmailWholeClub(false)}
+          setErr={setErr}
+        />
+      ) : null}
       {emailModalClass ? (
         <ClassEmailModal
           classType={emailModalClass}
@@ -415,6 +431,154 @@ function SummaryView({ onBack, onOpenMember, setErr }) {
   );
 }
 
+function ClubEmailModal({ onClose, onSent, setErr }) {
+  const [recipients, setRecipients] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [showRecipients, setShowRecipients] = useState(false);
+  const [subject, setSubject] = useState(`KungFu club announcement / 俱乐部通知 — ${localDateIso()}`);
+  const [body, setBody] = useState(
+    [
+      `Hi everyone,`,
+      ``,
+      `[Your message here — e.g. holiday hours, belt test, parking, general reminder.]`,
+      ``,
+      `大家好，`,
+      ``,
+      `[在此填写中文内容。]`,
+      ``,
+      `— KungFu Club`,
+    ].join('\n')
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api('/api/club/email-recipients');
+        if (!cancelled) setRecipients(r);
+      } catch (e) {
+        if (!cancelled) setErr(e.message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [setErr]);
+
+  const send = async () => {
+    setErr(null);
+    if (!subject.trim() || !body.trim()) {
+      setErr('Subject and body are required.');
+      return;
+    }
+    if (!confirm(`Send email to ${recipients?.recipients?.length ?? 0} recipient(s)?`)) return;
+    setBusy(true);
+    try {
+      await api('/api/club/email', {
+        method: 'POST',
+        body: JSON.stringify({ subject: subject.trim(), body: body.trim() }),
+      });
+      onSent();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const recCount = recipients?.recipients?.length ?? 0;
+  const noEmail = recipients?.withoutEmail ?? 0;
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h2>Email whole club</h2>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+
+        {loading ? (
+          <p className="sub">Loading recipients…</p>
+        ) : (
+          <>
+            <p className="sub">
+              <strong>{recCount}</strong> recipient
+              {recCount === 1 ? '' : 's'} (active members with credits left + email).
+              {noEmail > 0 ? (
+                <>
+                  {' '}
+                  <span className="sub-warn">
+                    {noEmail} active member{noEmail === 1 ? ' has' : 's have'} credits but no email — they
+                    will not be notified.
+                  </span>
+                </>
+              ) : null}
+            </p>
+
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => setShowRecipients((v) => !v)}
+            >
+              {showRecipients ? 'Hide' : 'Show'} recipient list
+            </button>
+            {showRecipients ? (
+              <ul className="recipients-list">
+                {recipients.recipients.map((r) => (
+                  <li key={r.id}>
+                    <span>{r.name}</span>
+                    <span className="recipient-email">{r.email}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+
+            <label>
+              Subject
+              <input
+                type="text"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                maxLength={200}
+              />
+            </label>
+            <label>
+              Message body
+              <textarea
+                rows={10}
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                maxLength={10000}
+              />
+            </label>
+            <p className="sub">
+              All recipients will be in BCC for privacy. From = your owner email.
+            </p>
+
+            <div className="modal-actions">
+              <button type="button" className="secondary" onClick={onClose}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={send}
+                disabled={busy || !recCount || !subject.trim() || !body.trim()}
+              >
+                {busy ? 'Sending…' : `Send to ${recCount}`}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ClassEmailModal({ classType, onClose, onSent, setErr }) {
   const [recipients, setRecipients] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -462,7 +626,7 @@ function ClassEmailModal({ classType, onClose, onSent, setErr }) {
       setErr('Subject and body are required.');
       return;
     }
-    if (!confirm(`Send email to ${recipients?.recipients.length} recipient(s)?`)) return;
+    if (!confirm(`Send email to ${recipients?.recipients?.length ?? 0} recipient(s)?`)) return;
     setBusy(true);
     try {
       await api(`/api/class-types/${classType.id}/email`, {

@@ -18,6 +18,8 @@ import {
   updateSettings,
   getEmailRecipientsForClass,
   countActiveCreditMembersForClass,
+  getEmailRecipientsWholeClub,
+  countActiveCreditMembersWholeClub,
   recordClassMessage,
   listClassMessages,
 } from './db.js';
@@ -78,6 +80,64 @@ app.delete('/api/class-types/:id', (req, res) => {
     return res.status(status).json({ error: result.error });
   }
   res.status(204).end();
+});
+
+app.get('/api/club/email-recipients', (_req, res) => {
+  const recipients = getEmailRecipientsWholeClub();
+  const totalActive = countActiveCreditMembersWholeClub();
+  res.json({
+    recipients: recipients.map((r) => ({
+      id: r.id,
+      name: r.name,
+      email: r.email,
+      balance: r.balance,
+    })),
+    totalActiveMembers: totalActive,
+    withoutEmail: totalActive - recipients.length,
+  });
+});
+
+app.post('/api/club/email', async (req, res) => {
+  const subject = String(req.body?.subject ?? '').trim();
+  const body = String(req.body?.body ?? '').trim();
+  if (!subject) return res.status(400).json({ error: 'Subject is required' });
+  if (subject.length > 200) return res.status(400).json({ error: 'Subject must be at most 200 characters' });
+  if (!body) return res.status(400).json({ error: 'Body is required' });
+  if (body.length > 10000) return res.status(400).json({ error: 'Body must be at most 10000 characters' });
+  const settings = getSettings();
+  if (!settings?.owner_email) {
+    return res.status(400).json({ error: 'Owner email is not set in Settings.' });
+  }
+  const recipients = getEmailRecipientsWholeClub();
+  if (!recipients.length) {
+    return res.status(400).json({
+      error: 'No active members with credits and an email in the club.',
+    });
+  }
+  const recipientEmails = recipients.map((r) => r.email);
+  const result = await sendMail({
+    bcc: recipientEmails,
+    subject,
+    text: body,
+  });
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error });
+  }
+  const messageId = recordClassMessage({
+    classId: null,
+    subject,
+    body,
+    recipientEmails,
+  });
+  log.info(
+    `Club-wide email sent: subject="${subject}" recipients=${recipients.length} messageRowId=${messageId}`
+  );
+  res.status(201).json({
+    ok: true,
+    classMessageId: messageId,
+    recipientCount: recipients.length,
+    smtpMessageId: result.messageId,
+  });
 });
 
 app.get('/api/class-types/:id/email-recipients', (req, res) => {

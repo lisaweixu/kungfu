@@ -253,6 +253,43 @@ export function createFakeServer(initial = {}) {
     },
     {
       method: 'GET',
+      match: /^\/api\/club\/email-recipients$/,
+      handle: () => {
+        const list = state.members
+          .filter((mm) => mm.active && mm.email && mm.balance > 0)
+          .map((mm) => ({ id: mm.id, name: mm.name, email: mm.email, balance: mm.balance }));
+        const totalActive = state.members.filter((mm) => mm.active && mm.balance > 0).length;
+        return {
+          recipients: list,
+          totalActiveMembers: totalActive,
+          withoutEmail: Math.max(0, totalActive - list.length),
+        };
+      },
+    },
+    {
+      method: 'POST',
+      match: /^\/api\/club\/email$/,
+      handle: (_, body) => {
+        if (!state.settings.smtp_host) {
+          return { __status: 400, error: 'SMTP not configured' };
+        }
+        const list = state.members.filter((mm) => mm.active && mm.email && mm.balance > 0);
+        if (!list.length) {
+          return { __status: 400, error: 'No active members with credits and an email in the club.' };
+        }
+        state.classMessages.push({
+          id: state.classMessages.length + 1,
+          classId: null,
+          subject: body.subject,
+          body: body.body,
+          recipientCount: list.length,
+          createdAt: new Date().toISOString(),
+        });
+        return { ok: true, recipientCount: list.length };
+      },
+    },
+    {
+      method: 'GET',
       match: /^\/api\/class-messages$/,
       handle: () => ({ messages: state.classMessages }),
     },

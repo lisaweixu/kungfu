@@ -81,7 +81,7 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS class_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    class_id INTEGER NOT NULL,
+    class_id INTEGER,
     subject TEXT NOT NULL,
     body TEXT NOT NULL,
     recipient_count INTEGER NOT NULL,
@@ -117,6 +117,34 @@ if (!memberColumns.some((c) => c.name === 'email')) {
 }
 
 db.exec('CREATE INDEX IF NOT EXISTS idx_ledger_class ON ledger(class_id)');
+
+/** Older DBs had class_messages.class_id NOT NULL; club-wide emails need NULL. */
+function migrateClassMessagesNullableClassId() {
+  const cols = db.prepare('PRAGMA table_info(class_messages)').all();
+  if (!cols.length) return;
+  const cid = cols.find((c) => c.name === 'class_id');
+  if (!cid || cid.notnull === 0) return;
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec(`
+    CREATE TABLE class_messages_mig (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      class_id INTEGER,
+      subject TEXT NOT NULL,
+      body TEXT NOT NULL,
+      recipient_count INTEGER NOT NULL,
+      recipient_emails TEXT NOT NULL,
+      sent_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (class_id) REFERENCES class_types(id)
+    );
+    INSERT INTO class_messages_mig (id, class_id, subject, body, recipient_count, recipient_emails, sent_at)
+      SELECT id, class_id, subject, body, recipient_count, recipient_emails, sent_at FROM class_messages;
+    DROP TABLE class_messages;
+    ALTER TABLE class_messages_mig RENAME TO class_messages;
+  `);
+  db.exec('PRAGMA foreign_keys = ON');
+}
+
+migrateClassMessagesNullableClassId();
 
 /** Local YYYY-MM-DD (matches SQLite's date('now', 'localtime')). */
 function localDateIso(d = new Date()) {
@@ -636,20 +664,63 @@ function countActiveCreditMembersForClass(classId) {
   return row?.n ?? 0;
 }
 
+/** Distinct active members who have any remaining credits (any class). */
+function countActiveCreditMembersWholeClub() {
+  const row = db
+    .prepare(
+      `SELECT COUNT(DISTINCT m.id) AS n
+       FROM members m
+       JOIN credit_batches b ON b.member_id = m.id
+       WHERE m.active = 1
+         AND b.quantity > b.used
+         AND (b.expires_at IS NULL OR b.expires_at >= date('now', 'localtime'))`
+    )
+    .get();
+  return row?.n ?? 0;
+}
+
+/**
+ * Active members who have at least one remaining credit anywhere and a non-empty email.
+ * balance = sum of remaining credits across all non-expired batches.
+ */
+function getEmailRecipientsWholeClub() {
+  return db
+    .prepare(
+      `SELECT m.id, m.name, m.email,
+              COALESCE(SUM(CASE
+                WHEN b.quantity > b.used
+                  AND (b.expires_at IS NULL OR b.expires_at >= date('now', 'localtime'))
+                THEN b.quantity - b.used
+                ELSE 0
+              END), 0) AS balance
+       FROM members m
+       JOIN credit_batches b ON b.member_id = m.id
+       WHERE m.active = 1
+         AND m.email IS NOT NULL
+         AND TRIM(m.email) <> ''
+       GROUP BY m.id
+       HAVING balance > 0
+       ORDER BY m.name COLLATE NOCASE`
+    )
+    .all();
+}
+
 function recordClassMessage({ classId, subject, body, recipientEmails }) {
   const info = db
     .prepare(
       `INSERT INTO class_messages (class_id, subject, body, recipient_count, recipient_emails)
        VALUES (?, ?, ?, ?, ?)`
     )
-    .run(classId, subject, body, recipientEmails.length, JSON.stringify(recipientEmails));
+    .run(classId ?? null, subject, body, recipientEmails.length, JSON.stringify(recipientEmails));
   return Number(info.lastInsertRowid);
 }
 
 function listClassMessages(limit = 50) {
   const rows = db
     .prepare(
-      `SELECT m.id, m.class_id, c.name AS class_name, m.subject, m.body,
+      `SELECT m.id, m.class_id,
+              COALESCE(c.name, '(Whole club)') AS class_name,
+              m.subject, m.body,
               m.recipient_count, m.recipient_emails, m.sent_at
        FROM class_messages m
        LEFT JOIN class_types c ON c.id = m.class_id
@@ -745,6 +816,8 @@ export {
   updateSettings,
   getEmailRecipientsForClass,
   countActiveCreditMembersForClass,
+  getEmailRecipientsWholeClub,
+  countActiveCreditMembersWholeClub,
   recordClassMessage,
   listClassMessages,
   findLowBalanceTriggers,

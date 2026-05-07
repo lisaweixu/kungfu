@@ -1,6 +1,6 @@
 # KungFu Front Desk Checklist
 
-Print this page and keep it near the front desk.
+Print this page and keep it near the front desk.   
 
 ---
 
@@ -17,8 +17,8 @@ Use these steps on the club computer.
 npm start
 ```
 
-3. Wait for the "listening" message.
-4. Open browser to: `http://localhost:3000`
+1. Wait for the "listening" message.
+2. Open browser to: `http://localhost:3000`
 
 ### Stop
 
@@ -46,16 +46,16 @@ Try these in order:
 npm install
 ```
 
-3. Then run again:
+1. Then run again:
 
 ```powershell
 npm start
 ```
 
-4. If you see a message that port `3000` is already in use:
-   - close other old app windows/terminals,
-   - then run `npm start` again.
-5. If `npm` is not recognized, Node.js is missing on this computer. Ask the owner/admin to install Node LTS.
+1. If you see a message that port `3000` is already in use:
+  - close other old app windows/terminals,
+  - then run `npm start` again.
+2. If `npm` is not recognized, Node.js is missing on this computer. Ask the owner/admin to install Node LTS.
 
 ---
 
@@ -93,8 +93,8 @@ npm start
 
 1. Open the student.
 2. In **Take class (attendance)**:
-   - choose class type,
-   - choose how many credits to subtract (usually 1).
+  - choose class type,
+  - choose how many credits to subtract (usually 1).
 3. Click **Subtract from this class**.
 4. If blocked, student may not have enough credits in that class.
 
@@ -140,3 +140,4 @@ Notes:
 - Review **Class email history**.
 - Send a **test email** from Settings.
 - Confirm daily backups are running.
+

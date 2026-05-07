@@ -687,6 +687,25 @@ button.owner-class-remove {
   border-color: #2d5a3d;
 }
 
+.summary-club-email-btn {
+  display: inline-block;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.85rem;
+  border: 1px solid #2d5a3d;
+  border-radius: 6px;
+  background: #fafafa;
+  color: #2d5a3d;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.summary-club-email-btn:hover {
+  background: #2d5a3d;
+  color: #fff;
+  border-color: #2d5a3d;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
